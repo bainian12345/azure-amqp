@@ -77,23 +77,21 @@ namespace Microsoft.Azure.Amqp
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, TimeSpan timeout)
         {
-            SaslHandler saslHandler = null;
+            SaslHandler saslHandler = CreateDefaultSaslHandlerIfPossible(addressUri);
+            return this.OpenConnectionAsync(addressUri, saslHandler, null, timeout, CancellationToken.None);
+        }
 
-            if (!string.IsNullOrEmpty(addressUri.UserInfo))
-            {
-                string[] parts = addressUri.UserInfo.Split(':');
-                if (parts.Length > 2)
-                {
-                    throw new ArgumentException("addressUri.UserInfo " + addressUri.UserInfo);
-                }
-
-                string userName = Uri.UnescapeDataString(parts[0]);
-                string password = parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty;
-
-                saslHandler = new SaslPlainHandler() { AuthenticationIdentity = userName, Password = password };
-            }
-
-            return this.OpenConnectionAsync(addressUri, saslHandler, timeout, CancellationToken.None);
+        /// <summary>
+        /// Opens a connection to the specified address using the provided <see cref="AmqpConnectionSettings"/>.
+        /// </summary>
+        /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
+        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="timeout">The operation timeout.</param>
+        /// <returns>An AMQP connection.</returns>
+        public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, AmqpConnectionSettings connectionSettings, TimeSpan timeout)
+        {
+            SaslHandler saslHandler = CreateDefaultSaslHandlerIfPossible(addressUri);
+            return this.OpenConnectionAsync(addressUri, saslHandler, connectionSettings, timeout, CancellationToken.None);
         }
 
         /// <summary>
@@ -105,7 +103,20 @@ namespace Microsoft.Azure.Amqp
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, TimeSpan timeout)
         {
-            return this.OpenConnectionAsync(addressUri, saslHandler, timeout, CancellationToken.None);
+            return this.OpenConnectionAsync(addressUri, saslHandler, null, timeout, CancellationToken.None);
+        }
+
+        /// <summary>
+        /// Opens a connection to the specified address using the provided <see cref="AmqpConnectionSettings"/>.
+        /// </summary>
+        /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
+        /// <param name="saslHandler">The SASL handler to perform authentication.</param>
+        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="timeout">The operation timeout.</param>
+        /// <returns>An AMQP connection.</returns>
+        public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, AmqpConnectionSettings connectionSettings, TimeSpan timeout)
+        {
+            return this.OpenConnectionAsync(addressUri, saslHandler, connectionSettings, timeout, CancellationToken.None);
         }
 
         /// <summary>
@@ -116,7 +127,7 @@ namespace Microsoft.Azure.Amqp
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(string address, CancellationToken cancellationToken)
         {
-            return this.OpenConnectionAsync(new Uri(address), null, TimeSpan.MaxValue, cancellationToken);
+            return this.OpenConnectionAsync(new Uri(address), null, null, TimeSpan.MaxValue, cancellationToken);
         }
 
         /// <summary>
@@ -127,7 +138,21 @@ namespace Microsoft.Azure.Amqp
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, CancellationToken cancellationToken)
         {
-            return this.OpenConnectionAsync(addressUri, null, TimeSpan.MaxValue, cancellationToken);
+            SaslHandler saslHandler = CreateDefaultSaslHandlerIfPossible(addressUri);
+            return this.OpenConnectionAsync(addressUri, saslHandler, null, TimeSpan.MaxValue, cancellationToken);
+        }
+
+        /// <summary>
+        /// Opens a connection to the specified address using the provided <see cref="AmqpConnectionSettings"/>.
+        /// </summary>
+        /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
+        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="cancellationToken">A cancellation token that can be used to signal the asynchronous operation should be canceled.</param>
+        /// <returns>An AMQP connection.</returns>
+        public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, AmqpConnectionSettings connectionSettings, CancellationToken cancellationToken)
+        {
+            SaslHandler saslHandler = CreateDefaultSaslHandlerIfPossible(addressUri);
+            return this.OpenConnectionAsync(addressUri, saslHandler, connectionSettings, TimeSpan.MaxValue, cancellationToken);
         }
 
         /// <summary>
@@ -139,10 +164,23 @@ namespace Microsoft.Azure.Amqp
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, CancellationToken cancellationToken)
         {
-            return this.OpenConnectionAsync(addressUri, saslHandler, TimeSpan.MaxValue, cancellationToken);
+            return this.OpenConnectionAsync(addressUri, saslHandler, null, TimeSpan.MaxValue, cancellationToken);
         }
 
-        async Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, TimeSpan timeout, CancellationToken cancellationToken)
+        /// <summary>
+        /// Opens a connection to the specified address using the provided <see cref="AmqpConnectionSettings"/>.
+        /// </summary>
+        /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
+        /// <param name="saslHandler">The SASL handler to perform authentication.</param>
+        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="cancellationToken">A cancellation token that can be used to signal the asynchronous operation should be canceled.</param>
+        /// <returns>An AMQP connection.</returns>
+        public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, AmqpConnectionSettings connectionSettings, CancellationToken cancellationToken)
+        {
+            return this.OpenConnectionAsync(addressUri, saslHandler, connectionSettings, TimeSpan.MaxValue, cancellationToken);
+        }
+
+        async Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, AmqpConnectionSettings connectionSettings, TimeSpan timeout, CancellationToken cancellationToken)
         {
             TransportSettings transportSettings;
 
@@ -205,12 +243,13 @@ namespace Microsoft.Azure.Amqp
 
             try
             {
-                AmqpConnectionSettings connectionSettings = new AmqpConnectionSettings()
+                if (connectionSettings == null)
                 {
-                    ContainerId = Guid.NewGuid().ToString(),
-                    HostName = addressUri.Host
-                };
+                    connectionSettings = new AmqpConnectionSettings();
+                }
 
+                connectionSettings.ContainerId = connectionSettings.ContainerId ?? Guid.NewGuid().ToString();
+                connectionSettings.HostName = connectionSettings.HostName ?? addressUri.Host;
                 AmqpConnection connection = new AmqpConnection(transport, settings, connectionSettings);
                 await Task.Factory.FromAsync(
                     static (t, k, c, s) => ((AmqpConnection)s).BeginOpen(t, k, c, s),
@@ -227,6 +266,27 @@ namespace Microsoft.Azure.Amqp
                 transport.Abort();
                 throw;
             }
+        }
+
+        static SaslHandler CreateDefaultSaslHandlerIfPossible(Uri addressUri)
+        {
+            SaslHandler saslHandler = null;
+
+            if (!string.IsNullOrEmpty(addressUri.UserInfo))
+            {
+                string[] parts = addressUri.UserInfo.Split(':');
+                if (parts.Length > 2)
+                {
+                    throw new ArgumentException("addressUri.UserInfo " + addressUri.UserInfo);
+                }
+
+                string userName = Uri.UnescapeDataString(parts[0]);
+                string password = parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty;
+
+                saslHandler = new SaslPlainHandler() { AuthenticationIdentity = userName, Password = password };
+            }
+
+            return saslHandler;
         }
     }
 }

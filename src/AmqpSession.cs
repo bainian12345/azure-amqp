@@ -117,7 +117,7 @@ namespace Microsoft.Azure.Amqp
         /// <param name="name">The link name.</param>
         /// <param name="address">The node address.</param>
         /// <returns>A task that returns a link on completion.</returns>
-        public async Task<T> OpenLinkAsync<T>(string name, string address) where T : AmqpLink
+        public Task<T> OpenLinkAsync<T>(string name, string address) where T : AmqpLink
         {
             AmqpLink link;
             Type linkType = typeof(T);
@@ -144,18 +144,56 @@ namespace Microsoft.Azure.Amqp
                 throw new NotSupportedException(linkType.Name);
             }
 
-            try
-            {
-                link.AttachTo(this);
-                await link.OpenAsync().ConfigureAwait(false);
+            return this.AttachAndOpenLinkAsync<T>(link, null);
+        }
 
-                return link as T;
-            }
-            catch
+        /// <summary>
+        /// Create and open a new <see cref="AmqpLink"/> to a node at the given address with the provided settings.
+        /// This overload should only be used for recovering links which have previously existed.
+        /// </summary>
+        /// <typeparam name="T">The type of link. Only <see cref="SendingAmqpLink"/> and <see cref="ReceivingAmqpLink"/> are supported.</typeparam>
+        /// <param name="linkTerminus">The link terminus from a previously existing link.</param>
+        /// <returns>A task that returns a link on completion.</returns>
+        public Task<T> RecoverLinkAsync<T>(AmqpLinkTerminus linkTerminus) where T : AmqpLink
+        {
+            if (!this.connection.Settings.EnableLinkRecovery)
             {
-                link.SafeClose();
-                throw;
+                throw new InvalidOperationException($"To enable link recovery, the {nameof(this.connection.Settings.EnableLinkRecovery)} option on the connection must be set to true.");
             }
+
+            AmqpLinkSettings linkSettings = linkTerminus?.LinkSettings;
+            if (linkSettings == null || string.IsNullOrEmpty(linkSettings.LinkName))
+            {
+                throw new ArgumentException("The link setting and its link name cannot be null or empty.");
+            }
+
+            AmqpLink link;
+            Type linkType = typeof(T);
+            if (linkType == typeof(SendingAmqpLink))
+            {
+                if (linkSettings.IsReceiver())
+                {
+                    throw new InvalidOperationException($"Cannot open a {nameof(SendingAmqpLink)} when the {nameof(AmqpLinkSettings)} respresents a {nameof(ReceivingAmqpLink)}.");
+                }
+
+                link = new SendingAmqpLink(linkSettings);
+            }
+            else if (linkType == typeof(ReceivingAmqpLink))
+            {
+                if (!linkSettings.IsReceiver())
+                {
+                    throw new InvalidOperationException($"Cannot open a {nameof(ReceivingAmqpLink)} when the {nameof(AmqpLinkSettings)} respresents a {nameof(SendingAmqpLink)}.");
+                }
+
+                linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
+                link = new ReceivingAmqpLink(linkSettings);
+            }
+            else
+            {
+                throw new NotSupportedException(linkType.Name);
+            }
+
+            return this.AttachAndOpenLinkAsync<T>(link, linkTerminus);
         }
 
         /// <summary>
@@ -431,6 +469,33 @@ namespace Microsoft.Azure.Amqp
             return true;
         }
 
+        async Task<T> AttachAndOpenLinkAsync<T>(AmqpLink link, AmqpLinkTerminus linkTerminus) where T : AmqpLink
+        {
+            if (this.connection.LinkTermini != null)
+            {
+                linkTerminus = linkTerminus ?? new AmqpLinkTerminus(link.Settings);
+                linkTerminus.ContainerId = this.connection.Settings.ContainerId;
+                linkTerminus.RemoteContainerId = this.connection.Settings.RemoteContainerId;
+                if (this.connection.LinkTermini.GetOrAdd(linkTerminus, link) != link)
+                {
+                    throw new InvalidOperationException($"Cannot attach link {link.Name} because there is already a link with the same name under the link recovery enabled connection {this.connection}.");
+                }
+            }
+
+            try
+            {
+                link.AttachTo(this);
+                await link.OpenAsync().ConfigureAwait(false);
+                link.Terminus = linkTerminus;
+                return link as T;
+            }
+            catch
+            {
+                link.SafeClose();
+                throw;
+            }
+        }
+
         void CloseLinks(bool abort)
         {
             IEnumerable<AmqpLink> linksSnapshot = null;
@@ -652,6 +717,7 @@ namespace Microsoft.Azure.Amqp
 
             thisPtr.incomingChannel.OnLinkClosed(link);
             thisPtr.outgoingChannel.OnLinkClosed(link);
+            thisPtr.Connection.LinkTermini?.TryRemove(link.Terminus, out _);
 
             AmqpTrace.Provider.AmqpRemoveLink(thisPtr, link, link.LocalHandle ?? 0u, link.RemoteHandle ?? 0u, link.Name);
         }

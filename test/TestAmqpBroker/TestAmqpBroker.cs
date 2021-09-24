@@ -123,6 +123,17 @@ namespace TestAmqpBroker
         public void Stop()
         {
             this.transportListener?.Close();
+            if (this.connections.Count > 0)
+            {
+                // Need to copy the connection references because calling Close on the connection will remove
+                // the connection from the collection, thus modifying the collection while looping through it.
+                AmqpConnection[] connections = new AmqpConnection[this.connections.Count];
+                this.connections.Values.CopyTo(connections, 0);
+                foreach (var connection in connections)
+                {
+                    connection.SafeClose();
+                }
+            }
         }
 
         public void AddQueue(string queue)

@@ -43,5 +43,54 @@ namespace Test.Microsoft.Azure.Amqp
 
             await connection.CloseAsync();
         }
+
+        [Fact]
+        public async Task ReconnectSample()
+        {
+            string queue = $"{nameof(ReconnectSample)}-{Guid.NewGuid().ToString().Substring(0, 10)}";
+            broker.AddQueue(queue);
+
+            var factory = new AmqpConnectionFactory();
+            AmqpConnectionSettings connectionSettings = new AmqpConnectionSettings()
+            {
+                EnableLinkRecovery = true
+            };
+
+            var connection = await factory.OpenConnectionAsync(addressUri, connectionSettings, TimeSpan.FromMinutes(1));
+            try
+            {
+                // Send and receive the message normally.
+                var session = await connection.OpenSessionAsync();
+                var sender = await session.OpenLinkAsync<SendingAmqpLink>("sender", queue);
+                await sender.SendMessageAsync(AmqpMessage.Create("Hello World!"));
+                var receiver = await session.OpenLinkAsync<ReceivingAmqpLink>("receiver", queue);
+                var message = await receiver.ReceiveMessageAsync();
+
+                // Restart the broker. All connections should be disconnected from the broker side.
+                broker.Stop();
+                await Task.Delay(1000);
+                broker.Start();
+
+                // Try to complete the received message now. Should throw exception because the link is closed.
+                Assert.Throws<AmqpException>(() => receiver.AcceptMessage(message));
+
+                // We need to reconnect with the same connection and link settings for link recovery.
+                AmqpConnectionSettings connectionRecoverySettings = connection.GetSettingsForRecovery();
+                connection = await factory.OpenConnectionAsync(addressUri, connectionRecoverySettings, AmqpConstants.DefaultTimeout);
+                session = await connection.OpenSessionAsync();
+                AmqpLinkTerminus receiverTerminus = receiver.GetLinkTerminus();
+                receiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(receiverTerminus);
+                receiver.AcceptMessage(message);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                throw;
+            }
+            finally
+            {
+                await connection.CloseAsync();
+            }
+        }
     }
 }

@@ -5,7 +5,9 @@ namespace Microsoft.Azure.Amqp
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using System.Threading;
+    using Microsoft.Azure.Amqp.Encoding;
     using Microsoft.Azure.Amqp.Framing;
     using Microsoft.Azure.Amqp.Transaction;
 
@@ -204,6 +206,8 @@ namespace Microsoft.Azure.Amqp
         public bool Drain => this.drain;
 
         internal override TimeSpan OperationTimeout => this.settings.OperationTimeout;
+
+        internal AmqpLinkTerminus Terminus { get; set; }
 
         /// <summary>
         /// Attaches the link to a session.
@@ -611,6 +615,29 @@ namespace Microsoft.Azure.Amqp
             }
 
             return moreCredit;
+        }
+
+        /// <summary>
+        /// Get the terminus info of this link for link recovery, which includes copying all its current settings and the unsettled deliveries.
+        /// </summary>
+        public AmqpLinkTerminus GetLinkTerminus()
+        {
+            if (!this.Session.Connection.Settings.EnableLinkRecovery)
+            {
+                throw new InvalidOperationException($"To enable link recovery, the {nameof(this.Session.Connection.Settings.EnableLinkRecovery)} option on the connection must be set to true.");
+            }
+
+            Dictionary<ArraySegment<byte>, DeliveryState> unsettledDeliveries;
+            lock (this.syncRoot)
+            {
+                // Link tracks the Delivery as map value, Attach frame will need DeliveryState as map value.
+                unsettledDeliveries = this.unsettledMap.ToDictionary(
+                    kvPair => kvPair.Key,
+                    kvPair => kvPair.Value.State);
+            }
+
+            this.Terminus.LinkSettings.Unsettled = new AmqpMap(unsettledDeliveries);
+            return this.Terminus;
         }
 
         /// <summary>

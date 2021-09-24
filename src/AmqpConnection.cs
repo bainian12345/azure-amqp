@@ -4,6 +4,7 @@
 namespace Microsoft.Azure.Amqp
 {
     using System;
+    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
@@ -25,6 +26,7 @@ namespace Microsoft.Azure.Amqp
         readonly HandleTable<AmqpSession> sessionsByRemoteHandle;
         HeartBeat heartBeat;
         Dictionary<Type, object> extensions;
+        ConcurrentDictionary<AmqpLinkTerminus, AmqpLink> linkTermini;
 
         /// <summary>
         /// The default factory instance to create connections.
@@ -92,6 +94,10 @@ namespace Microsoft.Azure.Amqp
             this.sessionsByRemoteHandle = new HandleTable<AmqpSession>(this.Settings.ChannelMax ?? AmqpConstants.DefaultMaxConcurrentChannels - 1);
             this.SessionFactory = this;
             this.heartBeat = HeartBeat.None;
+            if (connectionSettings.EnableLinkRecovery)
+            {
+                this.linkTermini = new ConcurrentDictionary<AmqpLinkTerminus, AmqpLink>(AmqpLinkTerminus.Comparer);
+            }
         }
 
         /// <summary>
@@ -152,6 +158,15 @@ namespace Microsoft.Azure.Amqp
                     return this.sessionsByLocalHandle.Values;
                 }
             }
+        }
+
+        /// <summary>
+        /// The link termini used by link recovery. The combination of link name+role must be unique under the connection scope to enable link recovery.
+        /// Should only be initialized if link recovery is enabled on the connection settings.
+        /// </summary>
+        internal ConcurrentDictionary<AmqpLinkTerminus, AmqpLink> LinkTermini
+        {
+            get => this.linkTermini;
         }
 
         /// <summary>
