@@ -121,6 +121,15 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
+        /// Used to indicate if the transfer frame should set the "aborted" field when sending this delivery.
+        /// </summary>
+        internal bool Aborted
+        {
+            get;
+            set;
+        }
+
+        /// <summary>
         /// Gets or sets the message format.
         /// </summary>
         public uint? MessageFormat

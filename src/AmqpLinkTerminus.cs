@@ -11,16 +11,18 @@
     {
         internal static IEqualityComparer<AmqpLinkTerminus> Comparer = new AmqpLinkTerminusComparer();
 
-        internal AmqpLinkTerminus(AmqpLinkSettings linkSettings)
+        internal AmqpLinkTerminus(AmqpLinkSettings attach)
         {
-            this.LinkSettings = linkSettings;
+            this.Settings = attach;
         }
 
         internal string ContainerId { get; set; }
 
-        internal AmqpLinkSettings LinkSettings { get; set; }
+        internal AmqpLinkSettings Settings { get; set; }
 
         internal string RemoteContainerId { get; set; }
+
+        internal Dictionary<ArraySegment<byte>, Delivery> UnsettledMap { get; set; }
 
         /// <summary>
         /// Used to comparer the equality of <see cref="AmqpLinkTerminus"/>.
@@ -36,13 +38,13 @@
 
                 return StringComparer.OrdinalIgnoreCase.Equals(x.ContainerId, y.ContainerId)
                         && StringComparer.OrdinalIgnoreCase.Equals(x.RemoteContainerId, y.RemoteContainerId)
-                        && StringComparer.OrdinalIgnoreCase.Equals(x.LinkSettings.LinkName, y.LinkSettings.LinkName)
-                        && x.LinkSettings.Role == y.LinkSettings.Role;
+                        && StringComparer.OrdinalIgnoreCase.Equals(x.Settings.LinkName, y.Settings.LinkName)
+                        && x.Settings.Role == y.Settings.Role;
             }
 
             public int GetHashCode(AmqpLinkTerminus obj)
             {
-                return (obj.LinkSettings.LinkName.ToLower() + obj.LinkSettings.Role).GetHashCode();
+                return (obj.Settings.LinkName.ToLower() + obj.Settings.Role).GetHashCode();
             }
         }
     }

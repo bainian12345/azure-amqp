@@ -127,6 +127,7 @@ namespace Microsoft.Azure.Amqp
             AmqpConnectionSettings settings = this.settings.Clone();
             settings.RemoteContainerId = null;
             settings.RemoteHostName = null;
+            settings.EnableLinkRecovery = true;
             return settings;
         }
 

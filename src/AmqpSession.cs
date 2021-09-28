@@ -161,7 +161,7 @@ namespace Microsoft.Azure.Amqp
                 throw new InvalidOperationException($"To enable link recovery, the {nameof(this.connection.Settings.EnableLinkRecovery)} option on the connection must be set to true.");
             }
 
-            AmqpLinkSettings linkSettings = linkTerminus?.LinkSettings;
+            AmqpLinkSettings linkSettings = linkTerminus?.Settings;
             if (linkSettings == null || string.IsNullOrEmpty(linkSettings.LinkName))
             {
                 throw new ArgumentException("The link setting and its link name cannot be null or empty.");
@@ -191,6 +191,11 @@ namespace Microsoft.Azure.Amqp
             else
             {
                 throw new NotSupportedException(linkType.Name);
+            }
+
+            foreach (KeyValuePair<ArraySegment<byte>, Delivery> pair in linkTerminus.UnsettledMap)
+            {
+                link.UnsettledMap.Add(pair);
             }
 
             return this.AttachAndOpenLinkAsync<T>(link, linkTerminus);
@@ -423,7 +428,7 @@ namespace Microsoft.Azure.Amqp
             return transition.To;
         }
 
-        internal bool TryCreateRemoteLink(Attach attach, out AmqpLink link)
+        internal bool TryCreateRemoteLink(AmqpLinkSettings linkSettings, out AmqpLink link)
         {
             link = null;
             if (this.linkFactory == null)
@@ -431,9 +436,7 @@ namespace Microsoft.Azure.Amqp
                 return false;
             }
 
-            AmqpLinkSettings linkSettings = AmqpLinkSettings.Create(attach);
             Exception error = null;
-
             try
             {
                 link = this.LinkFactory.CreateLink(this, linkSettings);
@@ -457,8 +460,8 @@ namespace Microsoft.Azure.Amqp
                 error = exception;
             }
 
-            link.RemoteHandle = attach.Handle;
-            this.linksByRemoteHandle.Add(attach.Handle.Value, link);
+            link.RemoteHandle = linkSettings.Handle;
+            this.linksByRemoteHandle.Add(linkSettings.Handle.Value, link);
 
             if (error != null)
             {
@@ -485,8 +488,9 @@ namespace Microsoft.Azure.Amqp
             try
             {
                 link.AttachTo(this);
-                await link.OpenAsync().ConfigureAwait(false);
                 link.Terminus = linkTerminus;
+                await link.OpenAsync().ConfigureAwait(false);
+                link.Terminus?.UnsettledMap?.Clear();
                 return link as T;
             }
             catch
@@ -627,9 +631,38 @@ namespace Microsoft.Azure.Amqp
 
                 if (link == null)
                 {
-                    if (!this.TryCreateRemoteLink(attach, out link))
+                    AmqpLinkSettings linkSettings = AmqpLinkSettings.Create(attach);
+                    AmqpLinkTerminus terminus = null;
+
+                    // This is a recoverable link.
+                    // There may be another link with the same name and role under a different session but same connection.
+                    // We need to close the other link and open this one because this is a link stealing scenario.
+                    if (this.connection.Settings.EnableLinkRecovery)
+                    {
+                        terminus = new AmqpLinkTerminus(linkSettings) { 
+                            ContainerId = this.connection.Settings.ContainerId,
+                            RemoteContainerId = this.connection.Settings.RemoteContainerId 
+                        };
+
+                        if (this.connection.LinkTermini.TryGetValue(terminus, out AmqpLink otherLink))
+                        {
+                            otherLink.SafeClose(new AmqpException(AmqpErrorCode.Stolen, $"The link {otherLink} with link name {otherLink.Name} from connection with containerID {otherLink.Session.connection.Settings.ContainerId} is closed due to link stealing."));
+                        }
+                    }
+
+                    if (!this.TryCreateRemoteLink(linkSettings, out link))
                     {
                         return;
+                    }
+
+                    if (this.connection.Settings.EnableLinkRecovery)
+                    {
+                        link.Terminus = terminus;
+                        if (this.connection.LinkTermini.GetOrAdd(terminus, link) != link)
+                        {
+                            // there was a race, some other link has already attached with the same terminus.
+                            throw new AmqpException(AmqpErrorCode.Stolen, $"The link {link} with link name {link.Name} from connection with containerID {link.Session.connection.Settings.ContainerId} is closed due to link stealing.");
+                        }
                     }
                 }
                 else

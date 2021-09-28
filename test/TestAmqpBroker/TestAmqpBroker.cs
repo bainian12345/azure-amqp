@@ -55,6 +55,8 @@ namespace TestAmqpBroker
             }
         }
 
+        public bool EnableLinkRecovery { get; set; }
+
         public void Start()
         {
             // create and initialize AmqpSettings
@@ -158,7 +160,8 @@ namespace TestAmqpBroker
             {
                 ContainerId = this.containerId,
                 MaxFrameSize = this.maxFrameSize,
-                IdleTimeOut = ConnectionIdleTimeOut
+                IdleTimeOut = ConnectionIdleTimeOut,
+                EnableLinkRecovery = this.EnableLinkRecovery
             };
 
             AmqpConnection connection = null;

@@ -47,16 +47,12 @@ namespace Test.Microsoft.Azure.Amqp
         [Fact]
         public async Task ReconnectSample()
         {
+            broker.EnableLinkRecovery = true;
             string queue = $"{nameof(ReconnectSample)}-{Guid.NewGuid().ToString().Substring(0, 10)}";
             broker.AddQueue(queue);
 
             var factory = new AmqpConnectionFactory();
-            AmqpConnectionSettings connectionSettings = new AmqpConnectionSettings()
-            {
-                EnableLinkRecovery = true
-            };
-
-            var connection = await factory.OpenConnectionAsync(addressUri, connectionSettings, TimeSpan.FromMinutes(1));
+            var connection = await factory.OpenConnectionAsync(addressUri, new AmqpConnectionSettings() { EnableLinkRecovery = true }, TimeSpan.FromMinutes(1));
             try
             {
                 // Send and receive the message normally.

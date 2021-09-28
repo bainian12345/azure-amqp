@@ -627,16 +627,16 @@ namespace Microsoft.Azure.Amqp
                 throw new InvalidOperationException($"To enable link recovery, the {nameof(this.Session.Connection.Settings.EnableLinkRecovery)} option on the connection must be set to true.");
             }
 
-            Dictionary<ArraySegment<byte>, DeliveryState> unsettledDeliveries;
+            Dictionary<ArraySegment<byte>, Delivery> unsettledDeliveries;
             lock (this.syncRoot)
             {
-                // Link tracks the Delivery as map value, Attach frame will need DeliveryState as map value.
                 unsettledDeliveries = this.unsettledMap.ToDictionary(
                     kvPair => kvPair.Key,
-                    kvPair => kvPair.Value.State);
+                    kvPair => kvPair.Value);
             }
 
-            this.Terminus.LinkSettings.Unsettled = new AmqpMap(unsettledDeliveries);
+            this.Terminus.Settings.Unsettled = new AmqpMap(unsettledDeliveries);
+            this.Terminus.UnsettledMap = this.unsettledMap;
             return this.Terminus;
         }
 
@@ -1107,6 +1107,52 @@ namespace Microsoft.Azure.Amqp
                 {
                     this.OnLinkOpenFailed(exception);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Decide on what to do with the unsettled map received from the remote Attach.
+        /// </summary>
+        void ProcessUnsettledDeliveries(Attach attach)
+        {
+            if (this.Session.Connection.Settings.EnableLinkRecovery)
+            {
+                Fx.Assert(this.Terminus != null, "If link recovery is enabled, the link should have its Terminus set.");
+                if (this.IsReceiver)
+                {
+                    foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
+                    {
+                        var deliveryTag = pair.Key;
+                        var localDeliveryState = pair.Value as DeliveryState;
+                        if (attach.Unsettled == null || !attach.Unsettled.TryGetValue(deliveryTag, out object peerDeliveryState) || peerDeliveryState is Outcome || peerDeliveryState is TransactionalState)
+                        {
+                            // The sender peer does not have record of this delivery, or it's already reached terminal state at the peer.
+                            // The peer will not be sending the delivery again, and there is nothing we can do at the receiver side, so just settle it locally.
+                            lock (this.syncRoot)
+                            {
+                                this.unsettledMap.Remove((ArraySegment<byte>)deliveryTag.Key);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
+                    {
+                        var deliveryTag = (ArraySegment<byte>)pair.Key.Key;
+                        var localDeliveryState = pair.Value as DeliveryState;
+                        if (localDeliveryState is Outcome || localDeliveryState is TransactionalState)
+                        {
+                            lock (this.syncRoot)
+                            {
+                                this.unsettledMap[deliveryTag].Aborted = true;
+                            }
+                        }
+
+                    }
+                }
+
+
             }
         }
 
