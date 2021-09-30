@@ -40,6 +40,15 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
+        /// Gets or set the resume field.
+        /// </summary>
+        public bool Resume
+        {
+            get;
+            set;
+        }
+
+        /// <summary>
         /// Gets or sets the settled field.
         /// </summary>
         public bool Settled

@@ -8,6 +8,7 @@ namespace Microsoft.Azure.Amqp
     using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
+    using Microsoft.Azure.Amqp.Encoding;
     using Microsoft.Azure.Amqp.Framing;
     using Microsoft.Azure.Amqp.Transaction;
 
@@ -463,6 +464,44 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
+        /// Decide on which unsettled deliveries should be resent to the remote, based on the remote delivery states.
+        /// </summary>
+        protected override void OnReceiveRemoteUnsettledDeliveries(Attach attach)
+        {
+            if (this.Session.Connection.Settings.EnableLinkRecovery && this.Terminus.Settings.Unsettled != null)
+            {
+                Fx.Assert(this.Terminus != null, "If link recovery is enabled, the link should have its Terminus set.");
+                foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
+                {
+                    var deliveryTagMapKey = pair.Key;
+                    ArraySegment<byte> deliveryTag = (ArraySegment<byte>)deliveryTagMapKey.Key;
+                    var localDeliveryState = pair.Value as DeliveryState;
+                    DeliveryState peerDeliveryState = null;
+                    bool peerHasDelivery = attach.Unsettled?.TryGetValue(deliveryTagMapKey, out peerDeliveryState) == true;
+
+                    if (peerHasDelivery && !(localDeliveryState is Outcome && !(peerDeliveryState is Outcome)))
+                    {
+                        Delivery delivery = this.Terminus.UnsettledMap[deliveryTag];
+                        if (!delivery.Settled)
+                        {
+                            lock (this.SyncRoot)
+                            {
+                                this.UnsettledMap.Add(deliveryTag, delivery);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // The sender peer does not have record of this delivery, or it's already reached terminal state locally.
+                        // The peer will not be sending the delivery again, and there is nothing we can do at the receiver side, so act as if they are settled.
+                    }
+                }
+
+                this.Terminus.UnsettledMap = null;
+            }
+        }
+
+        /// <summary>
         /// Called when a transfer is received from the peer.
         /// </summary>
         /// <param name="delivery">Delivery to which the transfer belongs.</param>
@@ -470,6 +509,30 @@ namespace Microsoft.Azure.Amqp
         /// <param name="frame">The transfer frame.</param>
         protected override void OnProcessTransfer(Delivery delivery, Transfer transfer, Frame frame)
         {
+            bool shouldProcessMessage = true;
+            if (this.Session.Connection.Settings.EnableLinkRecovery)
+            {
+                Delivery existing;
+                lock (this.SyncRoot)
+                {
+                    this.UnsettledMap.TryGetValue(delivery.DeliveryTag, out existing);
+                    shouldProcessMessage = !delivery.Aborted || delivery.Settled;
+                    if (!shouldProcessMessage)
+                    {
+                        // This is simply the remote sending an updated transfer to settle the delivery.
+                        // The delivery itself should be either already processed locally or unprocessable (aborted), so simply remove it. 
+                        this.UnsettledMap.Remove(delivery.DeliveryTag);
+                    }
+                }
+
+                if (existing?.State is Outcome && delivery.State is Outcome && existing.State.GetType() != delivery.State.GetType())
+                {
+                    // If both sides have reached terminal states, but the states are different, the receiver should send a disposition to acknowledge the sender's delivery state.
+                    this.DisposeDelivery(existing, true, delivery.State, false);
+                }
+            }
+
+
             Fx.Assert(delivery == null || delivery == this.currentMessage, "The delivery must be null or must be the same as the current message.");
             if (this.Settings.MaxMessageSize.HasValue && this.Settings.MaxMessageSize.Value > 0)
             {

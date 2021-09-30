@@ -627,16 +627,17 @@ namespace Microsoft.Azure.Amqp
                 throw new InvalidOperationException($"To enable link recovery, the {nameof(this.Session.Connection.Settings.EnableLinkRecovery)} option on the connection must be set to true.");
             }
 
-            Dictionary<ArraySegment<byte>, Delivery> unsettledDeliveries;
+            // The AmqpLinkSettings (or Attach) unsettled map must only contain the DeliveryState as the value, not the actual Delivery
+            Dictionary<ArraySegment<byte>, Delivery> unsettledMap;
             lock (this.syncRoot)
             {
-                unsettledDeliveries = this.unsettledMap.ToDictionary(
-                    kvPair => kvPair.Key,
-                    kvPair => kvPair.Value);
+                unsettledMap = new Dictionary<ArraySegment<byte>, Delivery>(this.unsettledMap, this.unsettledMap.Comparer);
             }
 
-            this.Terminus.Settings.Unsettled = new AmqpMap(unsettledDeliveries);
-            this.Terminus.UnsettledMap = this.unsettledMap;
+            this.Terminus.UnsettledMap = unsettledMap;
+            this.Terminus.Settings.Unsettled = new AmqpMap(unsettledMap.ToDictionary(
+                    kvPair => kvPair.Key,
+                    kvPair => kvPair.Value.State));
             return this.Terminus;
         }
 
@@ -844,6 +845,12 @@ namespace Microsoft.Azure.Amqp
         /// <param name="delivery">The delivery whose state is updated.</param>
         protected abstract void OnDisposeDeliveryInternal(Delivery delivery);
 
+        /// <summary>
+        /// A method to negotiate the remote unsettled deliveries with the local ones for link recovery.
+        /// </summary>
+        /// <param name="attach">The Attach frame received from the remote peer.</param>
+        protected abstract void OnReceiveRemoteUnsettledDeliveries(Attach attach);
+
         internal bool SendDelivery(Delivery delivery)
         {
             bool settled = delivery.Settled;
@@ -854,6 +861,8 @@ namespace Microsoft.Azure.Amqp
                 Transfer transfer = new Transfer();
                 transfer.Handle = this.LocalHandle;
                 transfer.More = more;
+                transfer.Aborted = delivery.Aborted;
+                transfer.Resume = delivery.Resume;
                 if (firstTransfer)
                 {
                     transfer.DeliveryId = uint.MaxValue;    // reserve the space first
@@ -1110,52 +1119,6 @@ namespace Microsoft.Azure.Amqp
             }
         }
 
-        /// <summary>
-        /// Decide on what to do with the unsettled map received from the remote Attach.
-        /// </summary>
-        void ProcessUnsettledDeliveries(Attach attach)
-        {
-            if (this.Session.Connection.Settings.EnableLinkRecovery)
-            {
-                Fx.Assert(this.Terminus != null, "If link recovery is enabled, the link should have its Terminus set.");
-                if (this.IsReceiver)
-                {
-                    foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
-                    {
-                        var deliveryTag = pair.Key;
-                        var localDeliveryState = pair.Value as DeliveryState;
-                        if (attach.Unsettled == null || !attach.Unsettled.TryGetValue(deliveryTag, out object peerDeliveryState) || peerDeliveryState is Outcome || peerDeliveryState is TransactionalState)
-                        {
-                            // The sender peer does not have record of this delivery, or it's already reached terminal state at the peer.
-                            // The peer will not be sending the delivery again, and there is nothing we can do at the receiver side, so just settle it locally.
-                            lock (this.syncRoot)
-                            {
-                                this.unsettledMap.Remove((ArraySegment<byte>)deliveryTag.Key);
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
-                    {
-                        var deliveryTag = (ArraySegment<byte>)pair.Key.Key;
-                        var localDeliveryState = pair.Value as DeliveryState;
-                        if (localDeliveryState is Outcome || localDeliveryState is TransactionalState)
-                        {
-                            lock (this.syncRoot)
-                            {
-                                this.unsettledMap[deliveryTag].Aborted = true;
-                            }
-                        }
-
-                    }
-                }
-
-
-            }
-        }
-
         void OnReceiveDetach(Detach detach)
         {
             AmqpTrace.Provider.AmqpLinkDetach(this, this.Name, this.LocalHandle ?? 0u, "R:DETACH",
@@ -1215,12 +1178,21 @@ namespace Microsoft.Azure.Amqp
 
         Error Negotiate(Attach attach)
         {
-            if (attach.MaxMessageSize() != 0)
+            Error error = null;
+            try
             {
-                this.settings.MaxMessageSize = Math.Min(this.settings.MaxMessageSize(), attach.MaxMessageSize());
+                this.OnReceiveRemoteUnsettledDeliveries(attach);
+                if (attach.MaxMessageSize() != 0)
+                {
+                    this.settings.MaxMessageSize = Math.Min(this.settings.MaxMessageSize(), attach.MaxMessageSize());
+                }
+            }
+            catch (Exception e)
+            {
+                error = Error.FromException(e);
             }
 
-            return null;
+            return error;
         }
 
         static void OnProviderLinkOpened(IAsyncResult result)

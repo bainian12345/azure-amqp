@@ -113,7 +113,6 @@ namespace Microsoft.Azure.Amqp
             settings.DesiredCapabilities = attach.DesiredCapabilities;
             settings.OfferedCapabilities = attach.OfferedCapabilities;
             settings.Properties = attach.Properties;
-            settings.Unsettled = attach.Unsettled;
             if (settings.Role.Value)
             {
                 settings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;

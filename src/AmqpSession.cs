@@ -193,11 +193,6 @@ namespace Microsoft.Azure.Amqp
                 throw new NotSupportedException(linkType.Name);
             }
 
-            foreach (KeyValuePair<ArraySegment<byte>, Delivery> pair in linkTerminus.UnsettledMap)
-            {
-                link.UnsettledMap.Add(pair);
-            }
-
             return this.AttachAndOpenLinkAsync<T>(link, linkTerminus);
         }
 
@@ -1429,6 +1424,11 @@ namespace Microsoft.Azure.Amqp
             protected override void OnDisposeDeliveryInternal(Delivery delivery)
             {
                 throw new NotImplementedException();
+            }
+
+            protected override void OnReceiveRemoteUnsettledDeliveries(Attach attach)
+            {
+                return;
             }
         }
     }

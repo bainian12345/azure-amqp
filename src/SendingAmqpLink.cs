@@ -4,8 +4,10 @@
 namespace Microsoft.Azure.Amqp
 {
     using System;
+    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
+    using Microsoft.Azure.Amqp.Encoding;
     using Microsoft.Azure.Amqp.Framing;
     using Microsoft.Azure.Amqp.Transaction;
 
@@ -17,6 +19,7 @@ namespace Microsoft.Azure.Amqp
         static readonly TimeSpan MinRequestCreditWindow = TimeSpan.FromSeconds(10);
         readonly SerializedWorker<AmqpMessage> pendingDeliveries;   // need link credit
         readonly WorkCollection<ArraySegment<byte>, SendAsyncResult, Outcome> inflightSends;
+        readonly List<Delivery> initialDeliveries; // deliveries to be sent upon opening this link (for link recovery)
         Action<Delivery> dispositionListener;
         DateTime lastFlowRequestTime;
 
@@ -41,6 +44,7 @@ namespace Microsoft.Azure.Amqp
             this.pendingDeliveries = new SerializedWorker<AmqpMessage>(this);
             this.inflightSends = new WorkCollection<ArraySegment<byte>, SendAsyncResult, Outcome>(ByteArrayComparer.Instance);
             this.lastFlowRequestTime = DateTime.UtcNow;
+            this.initialDeliveries = new List<Delivery>();
         }
 
         /// <summary>
@@ -232,6 +236,93 @@ namespace Microsoft.Azure.Amqp
         {
             this.AbortDeliveries();
             base.AbortInternal();
+        }
+
+        /// <summary>
+        /// Opens the link.
+        /// </summary>
+        /// <returns>True if open is completed.</returns>
+        protected override bool OpenInternal()
+        {
+            bool syncComplete = base.OpenInternal();
+            if (this.Session.Connection.Settings.EnableLinkRecovery)
+            {
+                foreach (Delivery delivery in this.initialDeliveries)
+                {
+                    bool success = this.TrySendDelivery(delivery);
+                    if (!success &&
+                        this.Session.State == AmqpObjectState.Opened &&
+                        DateTime.UtcNow - this.lastFlowRequestTime >= MinRequestCreditWindow)
+                    {
+                        // Tell the other side that we have some messages to send
+                        this.lastFlowRequestTime = DateTime.UtcNow;
+                        ActionItem.Schedule(s => OnRequestCredit(s), this);
+                    }
+                }
+            }
+
+            return syncComplete;
+        }
+
+        /// <summary>
+        /// Decide on which unsettled deliveries should be resent to the remote, based on the remote delivery states.
+        /// </summary>
+        protected override void OnReceiveRemoteUnsettledDeliveries(Attach attach)
+        {
+            if (this.Session.Connection.Settings.EnableLinkRecovery && this.Terminus.Settings.Unsettled != null)
+            {
+                Fx.Assert(this.Terminus != null, "If link recovery is enabled, the link should have its Terminus set.");
+                foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
+                {
+                    var deliveryTagMapKey = pair.Key;
+                    ArraySegment<byte> deliveryTag = (ArraySegment<byte>)deliveryTagMapKey.Key;
+                    var localDeliveryState = pair.Value as DeliveryState;
+                    DeliveryState peerDeliveryState = null;
+                    bool peerHasDelivery = attach.Unsettled?.TryGetValue(deliveryTagMapKey, out peerDeliveryState) == true;
+
+                    Delivery initialDelivery = null;
+                    if (localDeliveryState == null || localDeliveryState is Received)
+                    {
+                        if (peerDeliveryState is Outcome || localDeliveryState is TransactionalState || peerDeliveryState is TransactionalState)
+                        {
+                            // scenario 3, 8
+                        }
+                        else if (peerHasDelivery || this.Settings.SettleType == SettleMode.SettleOnReceive || this.Settings.SettleType == SettleMode.SettleOnReceive)
+                        {
+                            initialDelivery = this.Terminus.UnsettledMap[deliveryTag];
+                            initialDelivery.State = null; // we don't support resume sending partial payload with Received state
+                            initialDelivery.Aborted = localDeliveryState is Received && peerHasDelivery;
+                        }
+                    }
+                    else if (localDeliveryState is Outcome)
+                    {
+                        if (peerHasDelivery)
+                        {
+                            initialDelivery = this.Terminus.UnsettledMap[deliveryTag];
+                            if (peerDeliveryState is Outcome)
+                            {
+                                // scenario 12, 13
+                                initialDelivery.Settled = peerDeliveryState == localDeliveryState;
+                            }
+                            else
+                            {
+                                // scenario 11, 14
+                                initialDelivery.Aborted = true;
+                            }
+                        }
+                        else
+                        {
+                            // scenario 10. Do nothing.
+                        }
+                    }
+
+                    if (initialDelivery != null)
+                    {
+                        initialDelivery.Resume = peerHasDelivery;
+                        this.initialDeliveries.Add(initialDelivery);
+                    }
+                }
+            }
         }
 
         static ArraySegment<byte> CreateTag()
