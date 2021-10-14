@@ -166,7 +166,10 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         internal ConcurrentDictionary<AmqpLinkTerminus, AmqpLink> LinkTermini
         {
-            get => this.linkTermini;
+            get
+            {
+                return this.linkTermini;
+            }
         }
 
         /// <summary>
@@ -433,7 +436,11 @@ namespace Microsoft.Azure.Amqp
             }
         }
 
-        void ProcessFrame(Frame frame)
+        /// <summary>
+        /// Process an AMQP frame given to this connection.
+        /// </summary>
+        /// <param name="frame"></param>
+        protected void ProcessFrame(Frame frame)
         {
             Performative command = frame.Command;
             Fx.Assert(command != null, "Must have a valid command");
@@ -465,6 +472,16 @@ namespace Microsoft.Azure.Amqp
             if (this.TerminalException != null)
             {
                 this.Settings.AddProperty(AmqpConstants.OpenErrorName, Error.FromException(this.TerminalException));
+            }
+
+            if (this.Settings.EnableLinkRecovery)
+            {
+                if (this.Settings.DesiredCapabilities == null)
+                {
+                    this.Settings.DesiredCapabilities = new Framing.Multiple<Encoding.AmqpSymbol>();
+                }
+
+                this.Settings.DesiredCapabilities.Add(AmqpConstants.LinkRecovery);
             }
 
             this.SendCommand(this.Settings, 0, null);
@@ -599,6 +616,18 @@ namespace Microsoft.Azure.Amqp
             if (open.MaxFrameSize.HasValue)
             {
                 this.Settings.MaxFrameSize = Math.Min(this.Settings.MaxFrameSize.Value, open.MaxFrameSize.Value);
+            }
+
+            if (open.DesiredCapabilities?.Contains(AmqpConstants.LinkRecovery) == true)
+            {
+                this.Settings.EnableLinkRecovery = true;
+                this.linkTermini = this.linkTermini ?? new ConcurrentDictionary<AmqpLinkTerminus, AmqpLink>(AmqpLinkTerminus.Comparer);
+                if (this.Settings.OfferedCapabilities == null)
+                {
+                    this.Settings.OfferedCapabilities = new Multiple<Encoding.AmqpSymbol>();
+                }
+
+                this.Settings.OfferedCapabilities.Add(AmqpConstants.LinkRecovery);
             }
         }
 

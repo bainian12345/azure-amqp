@@ -479,21 +479,17 @@ namespace Microsoft.Azure.Amqp
                     DeliveryState peerDeliveryState = null;
                     bool peerHasDelivery = attach.Unsettled?.TryGetValue(deliveryTagMapKey, out peerDeliveryState) == true;
 
-                    if (peerHasDelivery && !(localDeliveryState is Outcome && !(peerDeliveryState is Outcome)))
+                    // If the delivery has reached terminal outcome on both sides, it means that the deliery has been already processed.
+                    // We should mark them on the receiver side so when the sender sends them again, we can simply settle them and skip processing.
+                    if (localDeliveryState is Outcome && peerDeliveryState is Outcome)
                     {
-                        Delivery delivery = this.Terminus.UnsettledMap[deliveryTag];
-                        if (!delivery.Settled)
+                        if (this.Terminus.UnsettledMap.TryGetValue(deliveryTag, out Delivery delivery) && !delivery.Settled)
                         {
                             lock (this.SyncRoot)
                             {
                                 this.UnsettledMap.Add(deliveryTag, delivery);
                             }
                         }
-                    }
-                    else
-                    {
-                        // The sender peer does not have record of this delivery, or it's already reached terminal state locally.
-                        // The peer will not be sending the delivery again, and there is nothing we can do at the receiver side, so act as if they are settled.
                     }
                 }
 
@@ -509,60 +505,65 @@ namespace Microsoft.Azure.Amqp
         /// <param name="frame">The transfer frame.</param>
         protected override void OnProcessTransfer(Delivery delivery, Transfer transfer, Frame frame)
         {
-            bool shouldProcessMessage = true;
+            bool shouldProcessMessage = !delivery.Aborted;
             if (this.Session.Connection.Settings.EnableLinkRecovery)
             {
                 Delivery existing;
                 lock (this.SyncRoot)
                 {
-                    this.UnsettledMap.TryGetValue(delivery.DeliveryTag, out existing);
-                    shouldProcessMessage = !delivery.Aborted || delivery.Settled;
-                    if (!shouldProcessMessage)
+                    if (this.UnsettledMap.TryGetValue(delivery.DeliveryTag, out existing))
                     {
-                        // This is simply the remote sending an updated transfer to settle the delivery.
-                        // The delivery itself should be either already processed locally or unprocessable (aborted), so simply remove it. 
-                        this.UnsettledMap.Remove(delivery.DeliveryTag);
+                        shouldProcessMessage = shouldProcessMessage && !delivery.Settled;
+
+                        if (!shouldProcessMessage)
+                        {
+                            // This is simply the remote sending an updated transfer to settle the delivery.
+                            // The delivery itself should be either already processed locally or unprocessable (aborted), so simply remove it. 
+                            this.UnsettledMap.Remove(delivery.DeliveryTag);
+                        }
                     }
                 }
 
+                // If both sides have reached terminal states, but the states are different, the receiver should send a disposition to acknowledge the sender's delivery state.
                 if (existing?.State is Outcome && delivery.State is Outcome && existing.State.GetType() != delivery.State.GetType())
                 {
-                    // If both sides have reached terminal states, but the states are different, the receiver should send a disposition to acknowledge the sender's delivery state.
                     this.DisposeDelivery(existing, true, delivery.State, false);
                 }
             }
 
-
-            Fx.Assert(delivery == null || delivery == this.currentMessage, "The delivery must be null or must be the same as the current message.");
-            if (this.Settings.MaxMessageSize.HasValue && this.Settings.MaxMessageSize.Value > 0)
+            if (shouldProcessMessage)
             {
-                ulong size = (ulong)(this.currentMessage.BytesTransfered + frame.Payload.Count);
-                if (size > this.Settings.MaxMessageSize.Value)
+                Fx.Assert(delivery == null || delivery == this.currentMessage, "The delivery must be null or must be the same as the current message.");
+                if (this.Settings.MaxMessageSize.HasValue && this.Settings.MaxMessageSize.Value > 0)
                 {
-                    if (this.IsClosing())
+                    ulong size = (ulong)(this.currentMessage.BytesTransfered + frame.Payload.Count);
+                    if (size > this.Settings.MaxMessageSize.Value)
                     {
-                        // The closing sequence has been started, so any
-                        // transfer is meaningless, so we can treat them as no-op
-                        return;
+                        if (this.IsClosing())
+                        {
+                            // The closing sequence has been started, so any
+                            // transfer is meaningless, so we can treat them as no-op
+                            return;
+                        }
+
+                        throw new AmqpException(AmqpErrorCode.MessageSizeExceeded,
+                            AmqpResources.GetString(AmqpResources.AmqpMessageSizeExceeded, this.currentMessage.DeliveryId.Value, size, this.Settings.MaxMessageSize.Value));
                     }
-
-                    throw new AmqpException(AmqpErrorCode.MessageSizeExceeded,
-                        AmqpResources.GetString(AmqpResources.AmqpMessageSizeExceeded, this.currentMessage.DeliveryId.Value, size, this.Settings.MaxMessageSize.Value));
                 }
-            }
 
-            Fx.Assert(this.currentMessage != null, "Current message must have been created!");
-            ArraySegment<byte> payload = frame.Payload;
-            frame.RawByteBuffer.AdjustPosition(payload.Offset, payload.Count);
-            frame.RawByteBuffer.AddReference();    // Message also owns the buffer from now on
-            this.currentMessage.AddPayload(frame.RawByteBuffer, !transfer.More());
-            if (!transfer.More())
-            {
-                AmqpMessage message = this.currentMessage;
-                this.currentMessage = null;
+                Fx.Assert(this.currentMessage != null, "Current message must have been created!");
+                ArraySegment<byte> payload = frame.Payload;
+                frame.RawByteBuffer.AdjustPosition(payload.Offset, payload.Count);
+                frame.RawByteBuffer.AddReference();    // Message also owns the buffer from now on
+                this.currentMessage.AddPayload(frame.RawByteBuffer, !transfer.More());
+                if (!transfer.More())
+                {
+                    AmqpMessage message = this.currentMessage;
+                    this.currentMessage = null;
 
-                AmqpTrace.Provider.AmqpReceiveMessage(this, message.DeliveryId.Value, message.Segments);
-                this.OnReceiveMessage(message);
+                    AmqpTrace.Provider.AmqpReceiveMessage(this, message.DeliveryId.Value, message.Segments);
+                    this.OnReceiveMessage(message);
+                }
             }
         }
 

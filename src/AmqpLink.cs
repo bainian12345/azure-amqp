@@ -624,7 +624,7 @@ namespace Microsoft.Azure.Amqp
         {
             if (!this.Session.Connection.Settings.EnableLinkRecovery)
             {
-                throw new InvalidOperationException($"To enable link recovery, the {nameof(this.Session.Connection.Settings.EnableLinkRecovery)} option on the connection must be set to true.");
+                throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpLinkRecoveryNotEnabled, nameof(this.Session.Connection.Settings.EnableLinkRecovery)));
             }
 
             // The AmqpLinkSettings (or Attach) unsettled map must only contain the DeliveryState as the value, not the actual Delivery
@@ -635,9 +635,11 @@ namespace Microsoft.Azure.Amqp
             }
 
             this.Terminus.UnsettledMap = unsettledMap;
-            this.Terminus.Settings.Unsettled = new AmqpMap(unsettledMap.ToDictionary(
+            this.Terminus.Settings.Unsettled = new AmqpMap(
+                unsettledMap.ToDictionary(
                     kvPair => kvPair.Key,
-                    kvPair => kvPair.Value.State));
+                    kvPair => kvPair.Value.State),
+                ByteArrayComparer.MapKeyByteArrayComparer.Instance);
             return this.Terminus;
         }
 
@@ -805,7 +807,15 @@ namespace Microsoft.Azure.Amqp
                 {
                     lock (this.syncRoot)
                     {
-                        this.unsettledMap.Add(delivery.DeliveryTag, delivery);
+                        if (this.unsettledMap.TryGetValue(delivery.DeliveryTag, out Delivery existing) && existing.State is Outcome && delivery.State is Outcome)
+                        {
+                            // this delivery is reached terminal outcome on both sides, which means it's already been processed.
+                            // No need to process this delivery again anymore, just need to simply settle it with the sender side outcome.
+                        }
+                        else
+                        {
+                            this.unsettledMap.Add(delivery.DeliveryTag, delivery);
+                        }
                     }
                 }
             }
@@ -948,7 +958,7 @@ namespace Microsoft.Azure.Amqp
             }
         }
 
-        void StartSendDelivery(Delivery delivery)
+        internal void StartSendDelivery(Delivery delivery)
         {
             delivery.Settled = this.settings.SettleType == SettleMode.SettleOnSend;
             if (!delivery.Settled)

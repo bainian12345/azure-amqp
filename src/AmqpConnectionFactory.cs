@@ -182,6 +182,79 @@ namespace Microsoft.Azure.Amqp
 
         async Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, AmqpConnectionSettings connectionSettings, TimeSpan timeout, CancellationToken cancellationToken)
         {
+            AmqpSettings settings = this.GetAmqpSettings(saslHandler);
+            TimeoutHelper timeoutHelper = new TimeoutHelper(timeout);
+            TransportBase transport = await this.GetTransportAsync(addressUri, settings, timeoutHelper.RemainingTime(), cancellationToken).ConfigureAwait(false);
+
+            try
+            {
+                if (connectionSettings == null)
+                {
+                    connectionSettings = new AmqpConnectionSettings();
+                }
+
+                connectionSettings.ContainerId = connectionSettings.ContainerId ?? Guid.NewGuid().ToString();
+                connectionSettings.HostName = connectionSettings.HostName ?? addressUri.Host;
+
+                return await this.CreateAndOpenConnectionAsync(transport, settings, connectionSettings, timeout, cancellationToken);
+            }
+            catch
+            {
+                transport.Abort();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Create and open the connection. Intended for internal use only.
+        /// </summary>
+        /// <param name="transport">The transport to be used for the connection.</param>
+        /// <param name="settings">The AMQP settings to be used for the connection.</param>
+        /// <param name="connectionSettings">The AmqpConnectionSettings to be used for the connection.</param>
+        /// <param name="timeout">The operation timeout.</param>
+        /// <param name="cancellationToken">A cancellation token that can be used to signal the asynchronous operation should be canceled.</param>
+        /// <returns>An AMQP connection.</returns>
+        protected virtual async Task<AmqpConnection> CreateAndOpenConnectionAsync(
+            TransportBase transport, 
+            AmqpSettings settings, 
+            AmqpConnectionSettings connectionSettings, 
+            TimeSpan timeout, 
+            CancellationToken cancellationToken)
+        {
+            AmqpConnection connection = new AmqpConnection(transport, settings, connectionSettings);
+            await Task.Factory.FromAsync(
+                static (t, k, c, s) => ((AmqpConnection)s).BeginOpen(t, k, c, s),
+                static r => ((AmqpConnection)r.AsyncState).EndOpen(r),
+                timeout,
+                cancellationToken,
+                connection)
+                .ConfigureAwait(false);
+
+            return connection;
+        }
+
+        internal AmqpSettings GetAmqpSettings(SaslHandler saslHandler)
+        {
+            AmqpSettings settings = this.settings.Clone();
+            settings.TransportProviders.Clear();
+
+            if (saslHandler != null)
+            {
+                // Provider for "AMQP3100"
+                SaslTransportProvider saslProvider = new SaslTransportProvider(AmqpVersion.V100);
+                saslProvider.AddHandler(saslHandler);
+                settings.TransportProviders.Add(saslProvider);
+            }
+
+            // Provider for "AMQP0100"
+            AmqpTransportProvider amqpProvider = new AmqpTransportProvider(AmqpVersion.V100);
+            settings.TransportProviders.Add(amqpProvider);
+
+            return settings;
+        }
+
+        internal Task<TransportBase> GetTransportAsync(Uri addressUri, AmqpSettings settings, TimeSpan timeout, CancellationToken cancellationToken)
+        {
             TransportSettings transportSettings;
 
             if (addressUri.Scheme.Equals(AmqpConstants.SchemeAmqp, StringComparison.OrdinalIgnoreCase))
@@ -222,50 +295,8 @@ namespace Microsoft.Azure.Amqp
                 throw new NotSupportedException(addressUri.Scheme);
             }
 
-            AmqpSettings settings = this.settings.Clone();
-            settings.TransportProviders.Clear();
-
-            if (saslHandler != null)
-            {
-                // Provider for "AMQP3100"
-                SaslTransportProvider saslProvider = new SaslTransportProvider(AmqpVersion.V100);
-                saslProvider.AddHandler(saslHandler);
-                settings.TransportProviders.Add(saslProvider);
-            }
-
-            // Provider for "AMQP0100"
-            AmqpTransportProvider amqpProvider = new AmqpTransportProvider(AmqpVersion.V100);
-            settings.TransportProviders.Add(amqpProvider);
-
-            TimeoutHelper timeoutHelper = new TimeoutHelper(timeout);
             AmqpTransportInitiator initiator = new AmqpTransportInitiator(settings, transportSettings);
-            TransportBase transport = await initiator.ConnectAsync(timeoutHelper.RemainingTime(), cancellationToken).ConfigureAwait(false);
-
-            try
-            {
-                if (connectionSettings == null)
-                {
-                    connectionSettings = new AmqpConnectionSettings();
-                }
-
-                connectionSettings.ContainerId = connectionSettings.ContainerId ?? Guid.NewGuid().ToString();
-                connectionSettings.HostName = connectionSettings.HostName ?? addressUri.Host;
-                AmqpConnection connection = new AmqpConnection(transport, settings, connectionSettings);
-                await Task.Factory.FromAsync(
-                    static (t, k, c, s) => ((AmqpConnection)s).BeginOpen(t, k, c, s),
-                    static r => ((AmqpConnection)r.AsyncState).EndOpen(r),
-                    timeoutHelper.RemainingTime(),
-                    cancellationToken,
-                    connection)
-                    .ConfigureAwait(false);
-
-                return connection;
-            }
-            catch
-            {
-                transport.Abort();
-                throw;
-            }
+            return initiator.ConnectAsync(timeout, cancellationToken);
         }
 
         static SaslHandler CreateDefaultSaslHandlerIfPossible(Uri addressUri)

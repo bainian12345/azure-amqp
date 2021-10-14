@@ -11,9 +11,10 @@
     {
         internal static IEqualityComparer<AmqpLinkTerminus> Comparer = new AmqpLinkTerminusComparer();
 
-        internal AmqpLinkTerminus(AmqpLinkSettings attach)
+        internal AmqpLinkTerminus(AmqpLinkSettings settings)
         {
-            this.Settings = attach;
+            this.Settings = settings;
+            this.UnsettledMap = new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance);
         }
 
         internal string ContainerId { get; set; }

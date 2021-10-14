@@ -135,6 +135,7 @@ namespace Microsoft.Azure.Amqp
             newSettings.WriteBufferFullLimit = this.WriteBufferFullLimit;
             newSettings.WriteBufferEmptyLimit = this.WriteBufferEmptyLimit;
             newSettings.MinIdleTimeout = this.MinIdleTimeout;
+            newSettings.EnableLinkRecovery = this.EnableLinkRecovery;
 
             return newSettings;
         }

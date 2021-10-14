@@ -245,20 +245,9 @@ namespace Microsoft.Azure.Amqp
         protected override bool OpenInternal()
         {
             bool syncComplete = base.OpenInternal();
-            if (this.Session.Connection.Settings.EnableLinkRecovery)
+            if (this.Session.Connection.Settings.EnableLinkRecovery && this.State == AmqpObjectState.Opened)
             {
-                foreach (Delivery delivery in this.initialDeliveries)
-                {
-                    bool success = this.TrySendDelivery(delivery);
-                    if (!success &&
-                        this.Session.State == AmqpObjectState.Opened &&
-                        DateTime.UtcNow - this.lastFlowRequestTime >= MinRequestCreditWindow)
-                    {
-                        // Tell the other side that we have some messages to send
-                        this.lastFlowRequestTime = DateTime.UtcNow;
-                        ActionItem.Schedule(s => OnRequestCredit(s), this);
-                    }
-                }
+                this.SendInitialUnsettledDeliveries();
             }
 
             return syncComplete;
@@ -283,22 +272,32 @@ namespace Microsoft.Azure.Amqp
                     Delivery initialDelivery = null;
                     if (localDeliveryState == null || localDeliveryState is Received)
                     {
-                        if (peerDeliveryState is Outcome || localDeliveryState is TransactionalState || peerDeliveryState is TransactionalState)
+                        // For any of these conditions, the sender could just settle the delivery locally without having to resend.
+
+                        // OASIS AMQP doc section 3.4.6, delivery 3, 8
+                        bool remoteReachedTerminal = peerDeliveryState is Outcome;
+
+                        // Transactional deliveries should have their transactions aborted already
+                        bool transactional = localDeliveryState is TransactionalState || peerDeliveryState is TransactionalState;
+
+                        // OASIS AMQP doc section 3.4.6, delivery 1, 4, 5
+                        bool alreadySettledOnSend = this.Settings.SettleType == SettleMode.SettleOnSend && (!peerHasDelivery || (localDeliveryState == null && peerDeliveryState == null));
+
+                        if (!remoteReachedTerminal && !transactional && !alreadySettledOnSend)
                         {
-                            // scenario 3, 8
-                        }
-                        else if (peerHasDelivery || this.Settings.SettleType == SettleMode.SettleOnReceive || this.Settings.SettleType == SettleMode.SettleOnReceive)
-                        {
-                            initialDelivery = this.Terminus.UnsettledMap[deliveryTag];
-                            initialDelivery.State = null; // we don't support resume sending partial payload with Received state
-                            initialDelivery.Aborted = localDeliveryState is Received && peerHasDelivery;
+                            // should ideally always be true, Terminus.Settings.Unsettled should be consistent with Terminus.UnsettledMap.
+                            if (this.Terminus.UnsettledMap.TryGetValue(deliveryTag, out initialDelivery))
+                            {
+                                initialDelivery.State = null; // we don't support resume sending partial payload with Received state
+                                initialDelivery.Aborted = localDeliveryState is Received && peerHasDelivery;
+                            }
                         }
                     }
                     else if (localDeliveryState is Outcome)
                     {
-                        if (peerHasDelivery)
+                        // should ideally always be true, Terminus.Settings.Unsettled should be consistent with Terminus.UnsettledMap.
+                        if (peerHasDelivery && this.Terminus.UnsettledMap.TryGetValue(deliveryTag, out initialDelivery))
                         {
-                            initialDelivery = this.Terminus.UnsettledMap[deliveryTag];
                             if (peerDeliveryState is Outcome)
                             {
                                 // scenario 12, 13
@@ -321,6 +320,11 @@ namespace Microsoft.Azure.Amqp
                         initialDelivery.Resume = peerHasDelivery;
                         this.initialDeliveries.Add(initialDelivery);
                     }
+                }
+
+                if (this.Session.Connection.Settings.EnableLinkRecovery && this.State == AmqpObjectState.Opened)
+                {
+                    this.SendInitialUnsettledDeliveries();
                 }
             }
         }
@@ -410,6 +414,16 @@ namespace Microsoft.Azure.Amqp
             }
 
             return success;
+        }
+
+        void SendInitialUnsettledDeliveries()
+        {
+            foreach (Delivery delivery in this.initialDeliveries)
+            {
+                this.StartSendDelivery(delivery);
+            }
+
+            this.initialDeliveries.Clear();
         }
 
         readonly struct SendMessageParam

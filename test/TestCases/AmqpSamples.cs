@@ -45,14 +45,14 @@ namespace Test.Microsoft.Azure.Amqp
         }
 
         [Fact]
-        public async Task ReconnectSample()
+        public async Task LinkRecoverySample()
         {
-            broker.EnableLinkRecovery = true;
-            string queue = $"{nameof(ReconnectSample)}-{Guid.NewGuid().ToString().Substring(0, 10)}";
+            string queue = "LinkRecoverySample";
             broker.AddQueue(queue);
-
             var factory = new AmqpConnectionFactory();
+            // Create the AMQP connection with EnableLinkRecovery = true in its settings to allow link recovery.
             var connection = await factory.OpenConnectionAsync(addressUri, new AmqpConnectionSettings() { EnableLinkRecovery = true }, TimeSpan.FromMinutes(1));
+
             try
             {
                 // Send and receive the message normally.

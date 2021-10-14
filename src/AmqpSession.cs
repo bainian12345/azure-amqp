@@ -469,7 +469,7 @@ namespace Microsoft.Azure.Amqp
 
         async Task<T> AttachAndOpenLinkAsync<T>(AmqpLink link, AmqpLinkTerminus linkTerminus) where T : AmqpLink
         {
-            if (this.connection.LinkTermini != null)
+            if (this.connection.Settings.EnableLinkRecovery)
             {
                 linkTerminus = linkTerminus ?? new AmqpLinkTerminus(link.Settings);
                 linkTerminus.ContainerId = this.connection.Settings.ContainerId;
@@ -639,7 +639,7 @@ namespace Microsoft.Azure.Amqp
                             RemoteContainerId = this.connection.Settings.RemoteContainerId 
                         };
 
-                        if (this.connection.LinkTermini.TryGetValue(terminus, out AmqpLink otherLink))
+                        if (this.connection.LinkTermini.TryRemove(terminus, out AmqpLink otherLink))
                         {
                             otherLink.SafeClose(new AmqpException(AmqpErrorCode.Stolen, $"The link {otherLink} with link name {otherLink.Name} from connection with containerID {otherLink.Session.connection.Settings.ContainerId} is closed due to link stealing."));
                         }
@@ -652,8 +652,9 @@ namespace Microsoft.Azure.Amqp
 
                     if (this.connection.Settings.EnableLinkRecovery)
                     {
-                        link.Terminus = terminus;
-                        if (this.connection.LinkTermini.GetOrAdd(terminus, link) != link)
+                        link.Terminus = link.Terminus ?? terminus;
+                        AmqpLink getOrAddLink = this.connection.LinkTermini.GetOrAdd(terminus, link);
+                        if (getOrAddLink != link)
                         {
                             // there was a race, some other link has already attached with the same terminus.
                             throw new AmqpException(AmqpErrorCode.Stolen, $"The link {link} with link name {link.Name} from connection with containerID {link.Session.connection.Settings.ContainerId} is closed due to link stealing.");
@@ -745,7 +746,8 @@ namespace Microsoft.Azure.Amqp
 
             thisPtr.incomingChannel.OnLinkClosed(link);
             thisPtr.outgoingChannel.OnLinkClosed(link);
-            thisPtr.Connection.LinkTermini?.TryRemove(link.Terminus, out _);
+            (thisPtr.Connection.LinkTermini as ICollection<KeyValuePair<AmqpLinkTerminus, AmqpLink>>)?.Remove(new KeyValuePair<AmqpLinkTerminus, AmqpLink>(link.Terminus, link));
+            //thisPtr.Connection.LinkTermini?.TryRemove(link.Terminus, out _);
 
             AmqpTrace.Provider.AmqpRemoveLink(thisPtr, link, link.LocalHandle ?? 0u, link.RemoteHandle ?? 0u, link.Name);
         }

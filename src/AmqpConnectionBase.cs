@@ -119,8 +119,8 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
-        /// Return a new instance of <see cref="AmqpConnectionSettings"/> that would be used for connection recovery.
-        /// This removes values from the remote peer so this is clean for establishing a new connection.
+        /// Return a new instance of <see cref="AmqpConnectionSettings"/> with identical fields and properties that would be used for connection recovery.
+        /// The fields from the remote peer are removed so that it is clean for establishing a new connection.
         /// </summary>
         public AmqpConnectionSettings GetSettingsForRecovery()
         {
