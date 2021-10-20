@@ -268,28 +268,21 @@ namespace Microsoft.Azure.Amqp
                     var localDeliveryState = pair.Value as DeliveryState;
                     DeliveryState peerDeliveryState = null;
                     bool peerHasDelivery = attach.Unsettled?.TryGetValue(deliveryTagMapKey, out peerDeliveryState) == true;
+                    bool remoteReachedTerminal = peerDeliveryState is Outcome;
+                    bool alreadySettledOnSend = this.Settings.SettleType == SettleMode.SettleOnSend && (!peerHasDelivery || (localDeliveryState == null && peerDeliveryState == null));
 
                     Delivery initialDelivery = null;
                     if (localDeliveryState == null || localDeliveryState is Received)
                     {
-                        // For any of these conditions, the sender could just settle the delivery locally without having to resend.
-
-                        // OASIS AMQP doc section 3.4.6, delivery 3, 8
-                        bool remoteReachedTerminal = peerDeliveryState is Outcome;
-
-                        // Transactional deliveries should have their transactions aborted already
-                        bool transactional = localDeliveryState is TransactionalState || peerDeliveryState is TransactionalState;
-
-                        // OASIS AMQP doc section 3.4.6, delivery 1, 4, 5
-                        bool alreadySettledOnSend = this.Settings.SettleType == SettleMode.SettleOnSend && (!peerHasDelivery || (localDeliveryState == null && peerDeliveryState == null));
-
-                        if (!remoteReachedTerminal && !transactional && !alreadySettledOnSend)
+                        // remoteReachedTerminal: OASIS AMQP doc section 3.4.6, delivery 3, 8
+                        // alreadySettledOnSend: OASIS AMQP doc section 3.4.6, delivery 1, 4, 5
+                        if (!remoteReachedTerminal && !alreadySettledOnSend)
                         {
                             // should ideally always be true, Terminus.Settings.Unsettled should be consistent with Terminus.UnsettledMap.
                             if (this.Terminus.UnsettledMap.TryGetValue(deliveryTag, out initialDelivery))
                             {
                                 initialDelivery.State = null; // we don't support resume sending partial payload with Received state
-                                initialDelivery.Aborted = localDeliveryState is Received && peerHasDelivery;
+                                initialDelivery.Aborted = peerDeliveryState is TransactionalState || (localDeliveryState is Received && peerHasDelivery);
                             }
                         }
                     }
@@ -298,20 +291,37 @@ namespace Microsoft.Azure.Amqp
                         // should ideally always be true, Terminus.Settings.Unsettled should be consistent with Terminus.UnsettledMap.
                         if (peerHasDelivery && this.Terminus.UnsettledMap.TryGetValue(deliveryTag, out initialDelivery))
                         {
-                            if (peerDeliveryState is Outcome)
+                            if (remoteReachedTerminal)
                             {
-                                // scenario 12, 13
+                                // OASIS AMQP doc section 3.4.6, delivery 12, 13
                                 initialDelivery.Settled = peerDeliveryState == localDeliveryState;
                             }
                             else
                             {
-                                // scenario 11, 14
+                                // OASIS AMQP doc section 3.4.6, delivery 11, 14, or when remote receiver is Transactional
                                 initialDelivery.Aborted = true;
                             }
                         }
                         else
                         {
-                            // scenario 10. Do nothing.
+                            // OASIS AMQP doc section 3.4.6, delivery 10
+                        }
+                    }
+                    else if (localDeliveryState is TransactionalState localTransactionalState)
+                    {
+                        if (this.Terminus.UnsettledMap.TryGetValue(deliveryTag, out initialDelivery))
+                        {
+                            if (peerDeliveryState is TransactionalState peerTransactionalState && peerTransactionalState.Outcome != null)
+                            {
+                                // both the sender and receiver reached transactional terminal state, essentially OASIS AMQP doc section 3.4.6, delivery 12, 13
+                                initialDelivery.Settled = peerDeliveryState == localDeliveryState;
+                            }
+                            else if (peerHasDelivery)
+                            {
+                                // if the sender is transactional, there is no reason for the receiver to have any non-transactional state, something went wrong if it did.
+                                // also, if the remote receiver is in transactional state but haven't reached terminal outcome, similar to OASIS AMQP doc section 3.4.6, delivery 11, 14.
+                                initialDelivery.Aborted = true;
+                            }
                         }
                     }
 

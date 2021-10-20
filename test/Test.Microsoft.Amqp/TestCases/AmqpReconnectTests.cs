@@ -6,6 +6,7 @@ namespace Test.Microsoft.Amqp.TestCases
     using global::Microsoft.Azure.Amqp;
     using global::Microsoft.Azure.Amqp.Encoding;
     using global::Microsoft.Azure.Amqp.Framing;
+    using global::Microsoft.Azure.Amqp.Transaction;
     using global::Microsoft.Azure.Amqp.Transport;
     using System;
     using System.Collections.Generic;
@@ -18,12 +19,12 @@ namespace Test.Microsoft.Amqp.TestCases
     using static TestAmqpBroker.TestAmqpBroker;
 
     [Trait("Category", TestCategory.Current)]
-    public class ReconnectTests : IClassFixture<TestAmqpBrokerFixture>
+    public class LinkRecoveryTests : IClassFixture<TestAmqpBrokerFixture>
     {
         static Uri addressUri;
         static TestAmqpBroker broker;
 
-        public ReconnectTests(TestAmqpBrokerFixture testAmqpBrokerFixture)
+        public LinkRecoveryTests(TestAmqpBrokerFixture testAmqpBrokerFixture)
         {
             addressUri = TestAmqpBrokerFixture.Address;
             broker = testAmqpBrokerFixture.Broker;
@@ -73,6 +74,7 @@ namespace Test.Microsoft.Amqp.TestCases
             }
         }
 
+        // Test recovering a sender link by using an existing link terminus and verify that the link settings are still the same.
         [Fact]
         public async Task SenderRecoveryTest()
         {
@@ -83,18 +85,31 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpSession session = await connection.OpenSessionAsync();
                 SendingAmqpLink originalSender = await session.OpenLinkAsync<SendingAmqpLink>(nameof(SenderRecoveryTest) + "-sender", nameof(SenderRecoveryTest));
                 originalSender.Settings.AddProperty("MyProp", "MyPropValue");
-                await originalSender.SendMessageAsync(AmqpMessage.Create("Hello World!"));
-                await originalSender.CloseAsync();
+                AmqpMessage[] messages = CreateMessages();
+                foreach (AmqpMessage m in messages)
+                {
+                    originalSender.UnsettledMap.Add(m.DeliveryTag, m);
+                }
 
+                await originalSender.CloseAsync();
                 AmqpLinkTerminus linkTerminus = originalSender.GetLinkTerminus();
+                foreach (AmqpMessage m in messages)
+                {
+                    linkTerminus.UnsettledMap.TryGetValue(m.DeliveryTag, out Delivery delivery);
+                    Assert.Equal(m.ValueBody.Value, ((AmqpMessage)delivery).ValueBody.Value);
+                    linkTerminus.Settings.Unsettled.TryGetValue(new MapKey(m.DeliveryTag), out DeliveryState state);
+                    Assert.Equal(m.State, state);
+                }
+
                 SendingAmqpLink newSender = await session.RecoverLinkAsync<SendingAmqpLink>(linkTerminus);
                 Assert.Equal(originalSender.Name, newSender.Name);
                 Assert.Equal(originalSender.Settings.LinkName, newSender.Settings.LinkName);
                 Assert.Equal(originalSender.IsReceiver, newSender.IsReceiver);
                 Assert.Equal("MyPropValue", newSender.Settings.Properties["MyProp"]);
 
+                // verify that sending works with this recovered link
                 ReceivingAmqpLink testReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>(nameof(SenderRecoveryTest) + "-receiver", nameof(SenderRecoveryTest));
-                await newSender.SendMessageAsync(AmqpMessage.Create("Hello World2!"));
+                await newSender.SendMessageAsync(AmqpMessage.Create("Hello World!"));
                 Assert.NotNull(await testReceiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(5000)));
             }
             finally
@@ -103,6 +118,7 @@ namespace Test.Microsoft.Amqp.TestCases
             }
         }
 
+        // Test recovering a receiver link by using an existing link terminus and verify that the link settings are still the same.
         [Fact]
         public async Task ReceiverRecoveryTest()
         {
@@ -113,16 +129,29 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpSession session = await connection.OpenSessionAsync();
                 ReceivingAmqpLink originalReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>(nameof(ReceiverRecoveryTest) + "-receiver", nameof(SenderRecoveryTest));
                 originalReceiver.Settings.AddProperty("MyProp", "MyPropValue");
-                originalReceiver.SetTotalLinkCredit(0, true); // The credit from the old link should not affect the new recovered link to be opened.
-                await originalReceiver.CloseAsync();
+                AmqpMessage[] messages = CreateMessages();
+                foreach (AmqpMessage m in messages)
+                {
+                    originalReceiver.UnsettledMap.Add(m.DeliveryTag, m);
+                }
 
+                await originalReceiver.CloseAsync();
                 AmqpLinkTerminus linkTerminus = originalReceiver.GetLinkTerminus();
+                foreach (AmqpMessage m in messages)
+                {
+                    linkTerminus.UnsettledMap.TryGetValue(m.DeliveryTag, out Delivery delivery);
+                    Assert.Equal(m.ValueBody.Value, ((AmqpMessage)delivery).ValueBody.Value);
+                    linkTerminus.Settings.Unsettled.TryGetValue(new MapKey(m.DeliveryTag), out DeliveryState state);
+                    Assert.Equal(m.State, state);
+                }
+
                 ReceivingAmqpLink newReceiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(linkTerminus);
                 Assert.Equal(originalReceiver.Name, newReceiver.Name);
                 Assert.Equal(originalReceiver.Settings.LinkName, newReceiver.Settings.LinkName);
                 Assert.Equal(originalReceiver.IsReceiver, newReceiver.IsReceiver);
                 Assert.Equal("MyPropValue", newReceiver.Settings.Properties["MyProp"]);
 
+                // verify that receiving works with this recovered link
                 SendingAmqpLink testSender = await session.OpenLinkAsync<SendingAmqpLink>(nameof(ReceiverRecoveryTest) + "-sender", nameof(SenderRecoveryTest));
                 await testSender.SendMessageAsync(AmqpMessage.Create("Hello World2!"));
                 Assert.NotNull(await newReceiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(5000)));
@@ -133,71 +162,109 @@ namespace Test.Microsoft.Amqp.TestCases
             }
         }
 
+        // Test opening new two senders using the same link name without EnableLinkRecovery. Should be able to create both.
         [Fact]
-        public async Task LinkRecoveryNameUniquenessTest()
+        public async Task LinkRecoveryNotEnabledSendersNameUniquenessTest()
         {
-            string linkName = nameof(LinkRecoveryNameUniquenessTest);
-            AmqpConnection nonRecoverableConnection = await AmqpConnection.Factory.OpenConnectionAsync(addressUri);
-            AmqpConnection recoverableConnection = await OpenTestConnectionAsync(addressUri);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(false, true, false, false);
+        }
 
-            try
-            {
-                AmqpSession nonRecoverableSession1 = await nonRecoverableConnection.OpenSessionAsync(new AmqpSessionSettings());
-                AmqpSession nonRecoverableSession2 = await nonRecoverableConnection.OpenSessionAsync(new AmqpSessionSettings());
-                AmqpSession recoverableSession1 = await recoverableConnection.OpenSessionAsync(new AmqpSessionSettings());
-                AmqpSession recoverableSession2 = await recoverableConnection.OpenSessionAsync(new AmqpSessionSettings());
+        // Test opening new two receivers using the same link name without EnableLinkRecovery. Should be able to create both.
+        [Fact]
+        public async Task LinkRecoveryNotEnabledReceiversNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(false, true, false, false);
+        }
 
-                // Having duplicate link names on same connection is allowed without link recovery.
-                SendingAmqpLink sendingLink1 = await nonRecoverableSession1.OpenLinkAsync<SendingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                SendingAmqpLink sendingLink2 = await nonRecoverableSession2.OpenLinkAsync<SendingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                await sendingLink1.CloseAsync();
-                await sendingLink2.CloseAsync();
+        // Test opening two new senders using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        [Fact]
+        public async Task NewSendersNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, true, false, false);
+        }
 
-                ReceivingAmqpLink receivingLink1 = await nonRecoverableSession1.OpenLinkAsync<ReceivingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                ReceivingAmqpLink receivingLink2 = await nonRecoverableSession2.OpenLinkAsync<ReceivingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                await receivingLink1.CloseAsync();
-                await receivingLink2.CloseAsync();
+        // Test opening two new receivers using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        [Fact]
+        public async Task NewReceiversNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, true, false, false);
+        }
 
-                // Having duplicate link names on same connection is not allowed if link recovery is enabled.
-                sendingLink1 = await recoverableSession1.OpenLinkAsync<SendingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                await Assert.ThrowsAsync<InvalidOperationException>(() => recoverableSession2.OpenLinkAsync<SendingAmqpLink>(linkName, addressUri.AbsoluteUri));
-                await sendingLink1.CloseAsync();
+        // Test opening a sender then recovering another sender using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        [Fact]
+        public async Task RecoveringSenderNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, false, false, false);
+        }
 
-                receivingLink1 = await recoverableSession1.OpenLinkAsync<ReceivingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                await Assert.ThrowsAsync<InvalidOperationException>(() => recoverableSession2.OpenLinkAsync<ReceivingAmqpLink>(linkName, addressUri.AbsoluteUri));
-                await receivingLink1.CloseAsync();
+        // Test opening a sender then recovering another receiver using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        [Fact]
+        public async Task RecoveringReceiverNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, false, false, false);
+        }
 
-                // Having duplicate link names on same connection is allowed if roles are different.
-                sendingLink1 = await recoverableSession1.OpenLinkAsync<SendingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                receivingLink1 = await recoverableSession2.OpenLinkAsync<ReceivingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                await sendingLink1.CloseAsync();
-                await receivingLink1.CloseAsync();
+        // Test opening a sender then a receiver using the same link name with EnableLinkRecovery. Should be able to create both.
+        [Fact]
+        public async Task SenderAndReceiverNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, ReceivingAmqpLink>(true, true, false, false);
+        }
 
-                // Check duplicate link termini on recovery as well.
-                sendingLink1 = await recoverableSession1.OpenLinkAsync<SendingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                AmqpLinkTerminus terminus = sendingLink1.GetLinkTerminus();
-                await Assert.ThrowsAsync<InvalidOperationException>(() => recoverableSession2.RecoverLinkAsync<SendingAmqpLink>(terminus));
-                await sendingLink1.CloseAsync();
+        // Test opening and closing a sender then opening another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task CreateNewSenderAfterClosedSenderNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, true, true, false);
+        }
 
-                receivingLink1 = await recoverableSession1.OpenLinkAsync<ReceivingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                terminus = receivingLink1.GetLinkTerminus();
-                await Assert.ThrowsAsync<InvalidOperationException>(() => recoverableSession2.RecoverLinkAsync<ReceivingAmqpLink>(terminus));
-                await receivingLink1.CloseAsync();
+        // Test opening and closing a receiver then opening another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task CreateNewReceiverAfterClosedReceiverNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, true, true, false);
+        }
 
-                // Ensure that the terminus is removed once it closes.
-                sendingLink2 = await recoverableSession2.OpenLinkAsync<SendingAmqpLink>(linkName, addressUri.AbsoluteUri);
-                terminus = sendingLink2.GetLinkTerminus();
-                await sendingLink2.CloseAsync();
-                sendingLink1 = await recoverableSession1.RecoverLinkAsync<SendingAmqpLink>(terminus);
-                sendingLink1.Abort();
-                sendingLink2 = await recoverableSession2.RecoverLinkAsync<SendingAmqpLink>(terminus);
-                await sendingLink2.CloseAsync();
-            }
-            finally
-            {
-                await nonRecoverableConnection.CloseAsync();
-                await recoverableConnection.CloseAsync();
-            }
+        // Test opening and aborting a sender then opening another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task CreateNewSenderAfterAbortedSenderNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, true, false, true);
+        }
+
+        // Test opening and aborting a receiver then opening another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task CreateNewReceiverAfterAbortedReceiverNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, true, false, true);
+        }
+
+        // Test opening and closing a sender then recovering another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task ReceoverSenderAfterClosedSenderNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, false, true, false);
+        }
+
+        // Test opening and closing a receiver then recovering another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task RecoverReceiverAfterClosedReceiverNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, false, true, false);
+        }
+
+        // Test opening and aborting a sender then opening another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task RecoverSenderAfterAbortedSenderNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, false, false, true);
+        }
+
+        // Test opening and aborting a receiver then recovering another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
+        [Fact]
+        public async Task RecoverReceiverAfterAbortedReceiverNameUniquenessTest()
+        {
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, false, false, true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 1.
@@ -213,7 +280,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 false,
                 null,
                 true,
-                true);
+                testDiffSettleModes: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 1 with sender/receiver swapped.
@@ -228,7 +295,6 @@ namespace Test.Microsoft.Amqp.TestCases
                 null,
                 false,
                 null,
-                false,
                 false);
         }
 
@@ -244,8 +310,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 null,
                 true,
                 AmqpConstants.ReceivedOutcome,
-                true,
-                false);
+                true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 2 with sender/receiver swapped.
@@ -261,7 +326,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 AmqpConstants.ReceivedOutcome,
                 true,
-                false);
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 3.
@@ -276,13 +341,12 @@ namespace Test.Microsoft.Amqp.TestCases
                 null,
                 true,
                 AmqpConstants.AcceptedOutcome,
-                false,
                 false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 3 with sender/receiver swapped. This is essentially the same as example delivery tag 14.
         // Local receiver has DeliveryState = null, remote sender has terminal DeliveryState.
-        // Expected behavior is that the sender will just settle the delivery locally with nothing being sent.
+        // Expected behavior is that the sender will resend the delivery with resume=true and aborted=true.
         [Fact]
         public async Task ClientReceiverNullDeliveryStateBrokerTerminalDeliveryStateTest()
         {
@@ -293,7 +357,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 AmqpConstants.AcceptedOutcome,
                 true,
-                false);
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 4.
@@ -309,7 +373,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 null,
                 true,
-                true);
+                testDiffSettleModes: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 4 with sender/receiver swapped. This is essentially the same as example delivery tag 14.
@@ -325,7 +389,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 null,
                 true,
-                true);
+                testDiffSettleModes: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 5.
@@ -341,7 +405,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 false,
                 null,
                 true,
-                true);
+                testDiffSettleModes: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 5 with sender/receiver swapped.
@@ -356,14 +420,13 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.ReceivedOutcome,
                 false,
                 null,
-                false,
                 false);
 
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 6, 7.
         // Local sender has DeliveryState = Received, remote receiver has DeliveryState = Received.
-        // Expected behavior is that the sender will immediately resend this delivery from the start with field resume=true.
+        // Expected behavior is that the sender will immediately resend this delivery from the start with field resume=true and aborted=true.
         [Fact]
         public async Task ClientSenderReceivedDeliveryStateBrokerReceivedDeliveryStateTest()
         {
@@ -374,12 +437,12 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 AmqpConstants.ReceivedOutcome,
                 true,
-                false);
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 6, 7 with sender/receiver swapped.
         // Local receiver has DeliveryState = Received, remote sender has DeliveryState = Received.
-        // Expected behavior is that the sender will immediately resend this delivery from the start with field resume=true.
+        // Expected behavior is that the sender will immediately resend this delivery from the start with field resume=true and aborted=true.
         [Fact]
         public async Task ClientReceiverReceivedDeliveryStateBrokerReceivedDeliveryStateTest()
         {
@@ -390,7 +453,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 AmqpConstants.ReceivedOutcome,
                 true,
-                false);
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 8.
@@ -405,7 +468,6 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.ReceivedOutcome,
                 true,
                 AmqpConstants.AcceptedOutcome,
-                false,
                 false);
         }
 
@@ -422,8 +484,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 AmqpConstants.AcceptedOutcome,
                 true,
-                false);
-
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 9.
@@ -439,7 +500,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 null,
                 true,
-                false);
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 9 with sender/receiver swapped. This is essentially the same as example delivery tag 2.
@@ -454,8 +515,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.ReceivedOutcome,
                 true,
                 null,
-                true,
-                false);
+                true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 10
@@ -470,7 +530,6 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 false,
                 null,
-                false,
                 false);
         }
 
@@ -486,7 +545,6 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 false,
                 null,
-                false,
                 false);
         }
 
@@ -503,7 +561,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 AmqpConstants.ReceivedOutcome,
                 true,
-                false);
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 11 with sender/receiver swapped. This is essentially the same as example delivery tag 8.
@@ -518,7 +576,6 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 true,
                 AmqpConstants.ReceivedOutcome,
-                false,
                 false);
         }
 
@@ -534,8 +591,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 true,
                 AmqpConstants.AcceptedOutcome,
-                true,
-                false);
+                true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 12 with sender/receiver swapped. 
@@ -550,8 +606,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 true,
                 AmqpConstants.AcceptedOutcome,
-                true,
-                false);
+                true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 13
@@ -566,8 +621,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 true,
                 AmqpConstants.RejectedOutcome,
-                true,
-                false);
+                true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 13 with sender/receiver swapped.
@@ -585,8 +639,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 true,
                 AmqpConstants.RejectedOutcome,
-                true,
-                false);
+                true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 14.
@@ -602,7 +655,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 null,
                 true,
-                false);
+                shouldAbortDelivery: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 14 with sender/receiver swapped. This is essentially the same as example delivery tag 3.
@@ -617,8 +670,177 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpConstants.AcceptedOutcome,
                 true,
                 null,
-                false,
                 false);
+        }
+
+        [Fact]
+        public async Task ClientSenderTransactionalDeliveryStateBrokerNoDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTransactionalDeliveryStateBrokerNoDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                false,
+                null,
+                false);
+        }
+
+        [Fact]
+        public async Task ClientSenderTransactionalDeliveryStateBrokerNullDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTransactionalDeliveryStateBrokerNullDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                true,
+                null,
+                false);
+        }
+
+        [Fact]
+        public async Task ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                true,
+                AmqpConstants.ReceivedOutcome,
+                false);
+        }
+
+        [Fact]
+        public async Task ClientSenderTransactionalDeliveryStateBrokerTerminalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTransactionalDeliveryStateBrokerTerminalDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                true,
+                AmqpConstants.AcceptedOutcome,
+                false);
+        }
+
+        [Fact]
+        public async Task ClientSenderTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
+        {
+            var txnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = txnId },
+                true,
+                new TransactionalState() { TxnId = txnId },
+                false);
+        }
+
+        [Fact]
+        public async Task ClientReceiverTransactionalDeliveryStateBrokerNoDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerNoDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                false,
+                null,
+                false);
+        }
+
+        [Fact]
+        public async Task ClientReceiverTransactionalDeliveryStateBrokerNullDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerNullDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                true,
+                null,
+                true);
+        }
+
+        [Fact]
+        public async Task ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                true,
+                AmqpConstants.ReceivedOutcome,
+                true);
+        }
+
+        [Fact]
+        public async Task ClientReceiverTransactionalDeliveryStateBrokerTerminalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                true,
+                AmqpConstants.AcceptedOutcome,
+                false);
+        }
+
+        [Fact]
+        public async Task ClientReceiverTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
+        {
+            var txnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                true,
+                new TransactionalState() { TxnId = txnId },
+                true,
+                new TransactionalState() { TxnId = txnId },
+                true);
+        }
+
+        /// <summary>
+        /// Test if the terminus uniqueness under a connection would be enforced given links with the same link names.
+        /// </summary>
+        /// <typeparam name="T1">The type of link1.</typeparam>
+        /// <typeparam name="T2">The type of link2.</typeparam>
+        /// <param name="linkRecoveryEnabled">True if EnableLinkRecovery is true for the connection.</param>
+        /// <param name="openNewLink">True if the second link should be a newly opened one. False if the second link should be recovered with a link terminus.</param>
+        /// <param name="shouldClose">True if the first link should be closed before opening the second one.</param>
+        /// <param name="shouldAbort">True if the first link should be aborted before opening the second one.</param>
+        /// <returns></returns>
+        static async Task LinkTerminusUniquenessTestAsync<T1, T2>(bool linkRecoveryEnabled, bool openNewLink, bool shouldClose, bool shouldAbort)
+            where T1 : AmqpLink
+            where T2 : AmqpLink
+        {
+            string linkName = Guid.NewGuid().ToString();
+            AmqpConnection connection = linkRecoveryEnabled ? await OpenTestConnectionAsync(addressUri) : await AmqpConnection.Factory.OpenConnectionAsync(addressUri);
+            try
+            {
+                AmqpSession recoverableSession1 = await connection.OpenSessionAsync(new AmqpSessionSettings());
+                AmqpSession recoverableSession2 = await connection.OpenSessionAsync(new AmqpSessionSettings());
+                T1 link1 = await recoverableSession1.OpenLinkAsync<T1>(linkName, addressUri.AbsoluteUri);
+
+                if (shouldClose)
+                {
+                    await link1.CloseAsync();
+                }
+                else if (shouldAbort)
+                {
+                    link1.Abort();
+                }
+
+                bool shouldThrow = linkRecoveryEnabled && !shouldClose && !shouldAbort && typeof(T1) == typeof(T2);
+                Task openLink2Task = openNewLink ? recoverableSession2.OpenLinkAsync<T2>(linkName, addressUri.AbsoluteUri) : recoverableSession2.RecoverLinkAsync<T2>(link1.GetLinkTerminus());
+                if (shouldThrow)
+                {
+                    await Assert.ThrowsAsync<InvalidOperationException>(() => openLink2Task);
+                }
+                else
+                {
+                    await openLink2Task;
+                }
+            }
+            finally
+            {
+                connection.Close();
+            }
         }
 
         /// <summary>
@@ -632,6 +854,7 @@ namespace Test.Microsoft.Amqp.TestCases
         /// <param name="hasRemoteDeliveryState">True if the remote link unsettled map should have record of the unsettled delivery.</param>
         /// <param name="remoteDeliveryState">The actual value of the local unsettled delivery state.</param>
         /// <param name="expectSend">True if the sender is expected to resend the unsettled delivery after negotiation with the receiver unsettled map.</param>
+        /// <param name="shouldAbortDelivery">True if the delivery sent by the sender should have the "Aborted" field set.</param>
         /// <param name="testDiffSettleModes">True if the same test should be run again with link.SettleType = SettleMode.SettleOnSend (default is SettleMode.SettleOnReceive).</param>
         /// <returns></returns>
         static async Task NegotiateUnsettledDeliveryTestAsync<T>(
@@ -641,7 +864,8 @@ namespace Test.Microsoft.Amqp.TestCases
             bool hasRemoteDeliveryState,
             DeliveryState remoteDeliveryState,
             bool expectSend,
-            bool testDiffSettleModes) where T : AmqpLink
+            bool shouldAbortDelivery = false,
+            bool testDiffSettleModes = false) where T : AmqpLink
         {
             TestAmqpConnection connection = await OpenTestConnectionAsync(addressUri);
             try
@@ -659,9 +883,9 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpMessage receiverSideUnsettledMessage = typeof(T) == typeof(SendingAmqpLink) ? remoteUnsettledMessage : localUnsettledMessage;
 
                 bool shouldSetResumeFlag = typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState;
-                bool shouldSetAbortedFlag = (senderSideUnsettledMessage?.State is Received || senderSideUnsettledMessage?.State is Outcome)
-                    && (typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState) 
-                    && (receiverSideUnsettledMessage?.State is Received || receiverSideUnsettledMessage?.State == null);
+                //bool shouldSetAbortedFlag = (senderSideUnsettledMessage?.State is Received || senderSideUnsettledMessage?.State is Outcome)
+                //    && (typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState) 
+                //    && (receiverSideUnsettledMessage?.State is Received || receiverSideUnsettledMessage?.State == null);
 
                 var localLink = await OpenTestLinkAsync<T>(session, $"{testName}1", unsettledMap);
                 if (expectSend)
@@ -681,7 +905,7 @@ namespace Test.Microsoft.Amqp.TestCases
                     }
                     Assert.True(receiverSideConnection.ReceivedPerformatives.Last.Value is Transfer);
                     Assert.True(((Transfer)receiverSideConnection.ReceivedPerformatives.Last.Value).Resume == shouldSetResumeFlag);
-                    Assert.True(((Transfer)receiverSideConnection.ReceivedPerformatives.Last.Value).Aborted == shouldSetAbortedFlag);
+                    Assert.True(((Transfer)receiverSideConnection.ReceivedPerformatives.Last.Value).Aborted == shouldAbortDelivery);
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
                         await TestReceivingMessageAsync(session, $"{testName}1", senderSideUnsettledMessage);
@@ -818,6 +1042,28 @@ namespace Test.Microsoft.Amqp.TestCases
             {
                 await receiver.CloseAsync();
             }
+        }
+
+        static AmqpMessage[] CreateMessages()
+        {
+            DeliveryState[] deliveryStates = new DeliveryState[] { 
+                null,
+                AmqpConstants.ReceivedOutcome,
+                AmqpConstants.AcceptedOutcome,
+                AmqpConstants.RejectedOutcome,
+                AmqpConstants.ReleasedOutcome,
+                new Modified(),
+                new TransactionalState() };
+
+            AmqpMessage[] messages = new AmqpMessage[deliveryStates.Length];
+            for (int i = 0; i < deliveryStates.Length; i++)
+            {
+                messages[i] = AmqpMessage.Create("Message" + i);
+                messages[i].State = deliveryStates[i];
+                messages[i].DeliveryTag = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
+            }
+
+            return messages;
         }
     }
 }

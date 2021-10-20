@@ -5,14 +5,18 @@
     using System.Collections.Generic;
 
     /// <summary>
-    /// A class which represents a link endpoint, which may be used for link recovery.
+    /// A class which represents a link endpoint, which contains information about the link's settings and unsettled map.
+    /// This may be used for link recovery.
     /// </summary>
     public class AmqpLinkTerminus
     {
-        internal static IEqualityComparer<AmqpLinkTerminus> Comparer = new AmqpLinkTerminusComparer();
-
         internal AmqpLinkTerminus(AmqpLinkSettings settings)
         {
+            if (settings == null)
+            {
+                throw new ArgumentNullException(nameof(settings));
+            }
+
             this.Settings = settings;
             this.UnsettledMap = new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance);
         }
@@ -26,27 +30,22 @@
         internal Dictionary<ArraySegment<byte>, Delivery> UnsettledMap { get; set; }
 
         /// <summary>
-        /// Used to comparer the equality of <see cref="AmqpLinkTerminus"/>.
+        /// Determines whether two link termini are equal based on <see cref="Attach.LinkName"/>
+        /// and <see cref="Attach.Role"/> of their link settings. Name comparison is case insensitive.
         /// </summary>
-        internal class AmqpLinkTerminusComparer : IEqualityComparer<AmqpLinkTerminus>
+        /// <param name="obj">The object to compare with the current object.</param>
+        public override bool Equals(object obj)
         {
-            public bool Equals(AmqpLinkTerminus x, AmqpLinkTerminus y)
-            {
-                if (x == null || y == null)
-                {
-                    return x == y;
-                }
+            AmqpLinkTerminus other = obj as AmqpLinkTerminus;
+            return this.Settings.Equals(other.Settings);
+        }
 
-                return StringComparer.OrdinalIgnoreCase.Equals(x.ContainerId, y.ContainerId)
-                        && StringComparer.OrdinalIgnoreCase.Equals(x.RemoteContainerId, y.RemoteContainerId)
-                        && StringComparer.OrdinalIgnoreCase.Equals(x.Settings.LinkName, y.Settings.LinkName)
-                        && x.Settings.Role == y.Settings.Role;
-            }
-
-            public int GetHashCode(AmqpLinkTerminus obj)
-            {
-                return (obj.Settings.LinkName.ToLower() + obj.Settings.Role).GetHashCode();
-            }
+        /// <summary>
+        /// Gets a hash code of the object.
+        /// </summary>
+        public override int GetHashCode()
+        {
+            return this.Settings.GetHashCode();
         }
     }
 }

@@ -96,7 +96,7 @@ namespace Microsoft.Azure.Amqp
             this.heartBeat = HeartBeat.None;
             if (connectionSettings.EnableLinkRecovery)
             {
-                this.linkTermini = new ConcurrentDictionary<AmqpLinkTerminus, AmqpLink>(AmqpLinkTerminus.Comparer);
+                this.linkTermini = new ConcurrentDictionary<AmqpLinkTerminus, AmqpLink>();
             }
         }
 
@@ -621,7 +621,7 @@ namespace Microsoft.Azure.Amqp
             if (open.DesiredCapabilities?.Contains(AmqpConstants.LinkRecovery) == true)
             {
                 this.Settings.EnableLinkRecovery = true;
-                this.linkTermini = this.linkTermini ?? new ConcurrentDictionary<AmqpLinkTerminus, AmqpLink>(AmqpLinkTerminus.Comparer);
+                this.linkTermini = this.linkTermini ?? new ConcurrentDictionary<AmqpLinkTerminus, AmqpLink>();
                 if (this.Settings.OfferedCapabilities == null)
                 {
                     this.Settings.OfferedCapabilities = new Multiple<Encoding.AmqpSymbol>();
