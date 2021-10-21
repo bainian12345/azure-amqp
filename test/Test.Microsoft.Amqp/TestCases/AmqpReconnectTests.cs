@@ -19,12 +19,12 @@ namespace Test.Microsoft.Amqp.TestCases
     using static TestAmqpBroker.TestAmqpBroker;
 
     [Trait("Category", TestCategory.Current)]
-    public class LinkRecoveryTests : IClassFixture<TestAmqpBrokerFixture>
+    public class AmqpReconnectTests : IClassFixture<TestAmqpBrokerFixture>
     {
         static Uri addressUri;
         static TestAmqpBroker broker;
 
-        public LinkRecoveryTests(TestAmqpBrokerFixture testAmqpBrokerFixture)
+        public AmqpReconnectTests(TestAmqpBrokerFixture testAmqpBrokerFixture)
         {
             addressUri = TestAmqpBrokerFixture.Address;
             broker = testAmqpBrokerFixture.Broker;
@@ -673,54 +673,71 @@ namespace Test.Microsoft.Amqp.TestCases
                 false);
         }
 
+        // Test when local sender is in pending transactional delivery state and remote has no record of this delivery.
+        // Expected behavior is that the sender should resend the message if settle mode is not settle-on-send, similar to Oasis AMQP doc section 3.4.6, example delivery tag 1.
         [Fact]
         public async Task ClientSenderTransactionalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
                 nameof(ClientSenderTransactionalDeliveryStateBrokerNoDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 false,
                 null,
-                false);
+                true,
+                testDiffSettleModes: true);
         }
 
+        // Test when local sender is in pending transactional delivery state and remote has DeliveryState = null.
+        // Expected behavior is that the sender should abort the delivery because we are unsure of the sender's state of delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 9.
         [Fact]
         public async Task ClientSenderTransactionalDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
                 nameof(ClientSenderTransactionalDeliveryStateBrokerNullDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 true,
                 null,
-                false);
+                true,
+                shouldAbortDelivery: true);
         }
 
+        // Test when local sender is in pending transactional delivery state and remote has DeliveryState = null.
+        // Expected behavior is that the sender should abort the delivery because we are unsure of the sender's state of delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 9.
         [Fact]
         public async Task ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
                 nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 true,
                 AmqpConstants.ReceivedOutcome,
-                false);
+                true,
+                shouldAbortDelivery: true);
         }
 
+        // Test when local sender is in pending transactional delivery state and remote has reached non-transactional terminal state.
+        // Expected behavior is that the sender should abort the delivery because the receiver should not have been able to become non-transactional.
         [Fact]
         public async Task ClientSenderTransactionalDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
                 nameof(ClientSenderTransactionalDeliveryStateBrokerTerminalDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 true,
                 AmqpConstants.AcceptedOutcome,
-                false);
+                true,
+                shouldAbortDelivery: true);
         }
 
+        // Test when local sender and remote receiver are both in pending transactional delivery state.
+        // Expected behavior is that the sender should abort the delivery because we are unsure of the sender's state of delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 7.
         [Fact]
         public async Task ClientSenderTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
         {
@@ -728,70 +745,207 @@ namespace Test.Microsoft.Amqp.TestCases
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
                 nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = txnId },
+                new TransactionalState(),
                 true,
-                new TransactionalState() { TxnId = txnId },
+                new TransactionalState(),
+                true,
+                shouldAbortDelivery: true);
+        }
+
+        // Test when local receiver is in pending transactional delivery state and remote sender is in terminal transactional delivery state.
+        // Expected behavior is that the sender should abort the delivery because we are unsure of the sender's state of delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 3, 8.
+        [Fact]
+        public async Task ClientSenderTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState(),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
                 false);
         }
 
+        // Test when local sender is in terminal transactional delivery state and remote receiver is in pending transactional delivery state.
+        // Expected behavior is that the sender should abort the delivery because the sender cannot resume the delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 11, 14.
+        [Fact]
+        public async Task ClientSenderTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true,
+                new TransactionalState(),
+                true,
+                shouldAbortDelivery: true);
+        }
+
+        // Test when local sender and remote receiver are both in the same terminal transactional state.
+        // Expected behavior is that the sender should send a delivery to settle the delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 12.
+        [Fact]
+        public async Task ClientSenderTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true);
+        }
+
+        // Test when local sender and remote receiver are both in the different terminal transactional states.
+        // Expected behavior is that the sender should send a delivery with the sender's delivery states to settle the delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 13.
+        [Fact]
+        public async Task ClientSenderTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
+                nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.RejectedOutcome },
+                true);
+        }
+
+        // Test when local receiver is in pending transactional delivery state and remote has no record of this delivery.
+        // Expected behavior is that the should not be sending anything because it has no record of this delivery to send.
         [Fact]
         public async Task ClientReceiverTransactionalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
                 nameof(ClientReceiverTransactionalDeliveryStateBrokerNoDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 false,
                 null,
                 false);
         }
 
+        // Test when local receiver is in pending transactional delivery state and remote has DeliveryState = null.
+        // Expected behavior is that the sender should abort the delivery because the local receiver should not have been transactional.
         [Fact]
         public async Task ClientReceiverTransactionalDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
                 nameof(ClientReceiverTransactionalDeliveryStateBrokerNullDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 true,
                 null,
-                true);
+                true,
+                shouldAbortDelivery: true);
         }
 
+        // Test when local receiver is in pending transactional delivery state and remote has DeliveryState = Received.
+        // Expected behavior is that the sender should abort the delivery because the local receiver should not have been transactional.
         [Fact]
         public async Task ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
                 nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 true,
                 AmqpConstants.ReceivedOutcome,
-                true);
+                true,
+                shouldAbortDelivery: true);
         }
 
+        // Test when local receiver is in pending transactional delivery state and remote has terminal non-transactional delivery state.
+        // Expected behavior is that the sender should abort the delivery because the local receiver should not have been transactional.
         [Fact]
         public async Task ClientReceiverTransactionalDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerTerminalDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray()) },
+                new TransactionalState(),
                 true,
                 AmqpConstants.AcceptedOutcome,
-                false);
+                true,
+                shouldAbortDelivery: true);
         }
 
+        // Test when local sender and remote receiver are both in pending transactional delivery state.
+        // Expected behavior is that the sender should abort the delivery because we are unsure of the sender's state of delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 7.
         [Fact]
         public async Task ClientReceiverTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
         {
-            var txnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
                 true,
-                new TransactionalState() { TxnId = txnId },
+                new TransactionalState(),
                 true,
-                new TransactionalState() { TxnId = txnId },
+                new TransactionalState(),
+                true,
+                shouldAbortDelivery: true);
+        }
+
+        // Test when local receiver is in pending transactional delivery state and remote sender is in terminal transactional delivery state.
+        // Expected behavior is that the sender should abort the delivery because we are unsure of the sender's state of delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 11, 14.
+        [Fact]
+        public async Task ClientReceiverTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState(),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true,
+                shouldAbortDelivery: true);
+        }
+
+        // Test when local receiver is in terminal transactional delivery state and remote sender is in pending transactional delivery state.
+        // Expected behavior is that the sender should not be sending anything because the receiver has already reached terminal state.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 3, 8.
+        [Fact]
+        public async Task ClientReceiverTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true,
+                new TransactionalState(),
+                false);
+        }
+
+        // Test when local receiver and remote sender are both in the same terminal transactional state.
+        // Expected behavior is that the sender should send a delivery to settle the delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 12.
+        [Fact]
+        public async Task ClientReceiverTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true);
+        }
+
+        // Test when local receiver and remote sender are both in the same terminal transactional state.
+        // Expected behavior is that the sender should send a delivery with the sender's delivery states to settle the delivery.
+        // Similar to Oasis AMQP doc section 3.4.6, example delivery tag 13.
+        [Fact]
+        public async Task ClientReceiverTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest()
+        {
+            await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
+                nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest),
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                true,
+                new TransactionalState() { Outcome = AmqpConstants.RejectedOutcome },
                 true);
         }
 
@@ -874,6 +1028,14 @@ namespace Test.Microsoft.Amqp.TestCases
                 TestAmqpConnection receiverSideConnection = typeof(T) == typeof(SendingAmqpLink) ? brokerConnection : connection;
                 AmqpSession session = await connection.OpenSessionAsync();
 
+                // If needed, actually declare the transaction so the broker can find this transaction and not throw exceptions.
+                Controller txController = null;
+                ArraySegment<byte> txnId = default;
+                if (localDeliveryState is TransactionalState || remoteDeliveryState is TransactionalState)
+                {
+                    DeclareTransaction(session, localDeliveryState, remoteDeliveryState, out txController, out txnId);
+                }
+
                 // Set up the unsettled message for both the local unsettled map and the remote unsettled map.
                 var unsettledMap = new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance);
                 var deliveryTag = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
@@ -888,6 +1050,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 //    && (receiverSideUnsettledMessage?.State is Received || receiverSideUnsettledMessage?.State == null);
 
                 var localLink = await OpenTestLinkAsync<T>(session, $"{testName}1", unsettledMap);
+
                 if (expectSend)
                 {
                     if (!(receiverSideConnection.ReceivedPerformatives.Last.Value is Transfer))
@@ -908,6 +1071,11 @@ namespace Test.Microsoft.Amqp.TestCases
                     Assert.True(((Transfer)receiverSideConnection.ReceivedPerformatives.Last.Value).Aborted == shouldAbortDelivery);
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
+                        if (txController != null)
+                        {
+                            await txController.DischargeAsync(txnId, false);
+                        }
+
                         await TestReceivingMessageAsync(session, $"{testName}1", senderSideUnsettledMessage);
                     }
                 }
@@ -923,15 +1091,26 @@ namespace Test.Microsoft.Amqp.TestCases
                 await localLink.CloseAsync();
                 if (testDiffSettleModes)
                 {
+                    if (localDeliveryState is TransactionalState || remoteDeliveryState is TransactionalState)
+                    {
+                        DeclareTransaction(session, localDeliveryState, remoteDeliveryState, out txController, out txnId);
+                    }
+
                     // When settle mode is SettleMode.SettleOnSend, the client sender does not need to resend the message upon open.
                     unsettledMap = new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance);
                     deliveryTag = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
                     localUnsettledMessage = hasLocalDeliveryState ? AddClientUnsettledDelivery(unsettledMap, deliveryTag, localDeliveryState) : null;
                     remoteUnsettledMessage = hasRemoteDeliveryState ? AddBrokerUnsettledDelviery(testName, deliveryTag, remoteDeliveryState) : null;
+
                     await OpenTestLinkAsync<T>(session, $"{testName}2", unsettledMap, SettleMode.SettleOnSend);
                     Assert.True(receiverSideConnection.ReceivedPerformatives.Last.Value is Attach);
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
+                        if (txController != null)
+                        {
+                            await txController.DischargeAsync(txnId, false);
+                        }
+
                         await TestReceivingMessageAsync(session, $"{testName}2", null);
                     }
                 }
@@ -1064,6 +1243,25 @@ namespace Test.Microsoft.Amqp.TestCases
             }
 
             return messages;
+        }
+
+        static void DeclareTransaction(AmqpSession session, DeliveryState localDeliveryState, DeliveryState remoteDeliveryState, out Controller txController, out ArraySegment<byte> txnId)
+        {
+                txController = new Controller(session, TimeSpan.FromSeconds(10));
+                txController.Open();
+                txnId = txController.DeclareAsync().Result;
+                var localTransactionalState = localDeliveryState as TransactionalState;
+                var remoteTransactionalState = remoteDeliveryState as TransactionalState;
+
+                if (localTransactionalState != null)
+                {
+                    localTransactionalState.TxnId = txnId;
+                }
+
+                if (remoteTransactionalState != null)
+                {
+                    remoteTransactionalState.TxnId = txnId;
+                }
         }
     }
 }
