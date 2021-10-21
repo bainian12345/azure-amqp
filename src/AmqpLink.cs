@@ -960,7 +960,8 @@ namespace Microsoft.Azure.Amqp
 
         internal void StartSendDelivery(Delivery delivery)
         {
-            delivery.Settled = this.settings.SettleType == SettleMode.SettleOnSend;
+            // The delivery may already be determined to be settled in scenarios such as link recovery.
+            delivery.Settled = delivery.Settled || this.settings.SettleType == SettleMode.SettleOnSend;
             if (!delivery.Settled)
             {
                 lock (this.syncRoot)

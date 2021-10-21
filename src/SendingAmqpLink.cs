@@ -296,7 +296,7 @@ namespace Microsoft.Azure.Amqp
                             if (remoteReachedTerminal)
                             {
                                 // OASIS AMQP doc section 3.4.6, delivery 12, 13.
-                                initialDelivery.Settled = peerDeliveryState == localDeliveryState;
+                                initialDelivery.Settled = peerDeliveryState.GetType() == localDeliveryState.GetType();
                             }
                             else
                             {
@@ -318,7 +318,7 @@ namespace Microsoft.Azure.Amqp
                                 if (peerDeliveryState is TransactionalState peerTransactionalState && peerTransactionalState.Outcome != null)
                                 {
                                     // both the sender and receiver reached transactional terminal state, similar to OASIS AMQP doc section 3.4.6, delivery 12, 13
-                                    initialDelivery.Settled = peerDeliveryState == localDeliveryState;
+                                    initialDelivery.Settled = peerTransactionalState.Outcome.GetType() == localTransactionalState.Outcome.GetType();
                                 }
                                 else
                                 {

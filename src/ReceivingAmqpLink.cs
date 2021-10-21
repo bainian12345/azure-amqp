@@ -525,7 +525,9 @@ namespace Microsoft.Azure.Amqp
                 }
 
                 // If both sides have reached terminal states, but the states are different, the receiver should send a disposition to acknowledge the sender's delivery state.
-                if (existing?.State is Outcome && delivery.State is Outcome && existing.State.GetType() != delivery.State.GetType())
+                Outcome localDeliveryOutcome = existing?.State?.Outcome();
+                Outcome remoteDeliveryOutcome = delivery.State?.Outcome();
+                if (localDeliveryOutcome != null && remoteDeliveryOutcome != null && !delivery.Settled)
                 {
                     this.DisposeDelivery(existing, true, delivery.State, false);
                 }

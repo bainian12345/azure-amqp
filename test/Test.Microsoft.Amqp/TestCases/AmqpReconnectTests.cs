@@ -1044,31 +1044,20 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpMessage senderSideUnsettledMessage = typeof(T) == typeof(SendingAmqpLink) ? localUnsettledMessage : remoteUnsettledMessage;
                 AmqpMessage receiverSideUnsettledMessage = typeof(T) == typeof(SendingAmqpLink) ? remoteUnsettledMessage : localUnsettledMessage;
 
-                bool shouldSetResumeFlag = typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState;
-                //bool shouldSetAbortedFlag = (senderSideUnsettledMessage?.State is Received || senderSideUnsettledMessage?.State is Outcome)
-                //    && (typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState) 
-                //    && (receiverSideUnsettledMessage?.State is Received || receiverSideUnsettledMessage?.State == null);
-
                 var localLink = await OpenTestLinkAsync<T>(session, $"{testName}1", unsettledMap);
+                Transfer expectedTransfer = receiverSideConnection.ReceivedPerformatives.Last.Value as Transfer;
+                bool transferSettled = expectedTransfer?.Settled == true;
+                bool shouldSetResumeFlag = typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState;
 
                 if (expectSend)
                 {
-                    if (!(receiverSideConnection.ReceivedPerformatives.Last.Value is Transfer))
-                    {
-                        string ex = "";
-                        foreach (var performatve in receiverSideConnection.ReceivedPerformatives)
-                        {
-                            ex += performatve.GetType().ToString() + "\n";
-                            if (performatve is Detach detach && detach.Error != null)
-                            {
-                                ex += detach.Error.ToString();
-                            }
-                        }
-                        throw new ArgumentException(ex);
-                    }
-                    Assert.True(receiverSideConnection.ReceivedPerformatives.Last.Value is Transfer);
-                    Assert.True(((Transfer)receiverSideConnection.ReceivedPerformatives.Last.Value).Resume == shouldSetResumeFlag);
-                    Assert.True(((Transfer)receiverSideConnection.ReceivedPerformatives.Last.Value).Aborted == shouldAbortDelivery);
+                    Assert.NotNull(expectedTransfer);
+                    Assert.Equal(expectedTransfer.Resume, shouldSetResumeFlag);
+                    Assert.Equal(expectedTransfer.Aborted, shouldAbortDelivery);
+                    Outcome localDeliveryOutcome = localDeliveryState?.Outcome();
+                    Outcome remoteDeliveryOutcome = remoteDeliveryState?.Outcome();
+                    Assert.Equal(localDeliveryOutcome != null && remoteDeliveryOutcome != null && localDeliveryOutcome.GetType() == remoteDeliveryOutcome.GetType(), transferSettled);
+
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
                         if (txController != null)
@@ -1076,7 +1065,9 @@ namespace Test.Microsoft.Amqp.TestCases
                             await txController.DischargeAsync(txnId, false);
                         }
 
-                        await TestReceivingMessageAsync(session, $"{testName}1", senderSideUnsettledMessage);
+                        // If transaction is involved, then the broker would still receive the message due to transaction completing,
+                        // even though the broker side receiver does not process the delivery because it's sent as settled.
+                        await TestReceivingMessageAsync(session, $"{testName}1", transferSettled && txController == null ? null : senderSideUnsettledMessage);
                     }
                 }
                 else

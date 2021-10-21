@@ -426,6 +426,17 @@ namespace Microsoft.Azure.Amqp
             return target.Durable == null ? false : (TerminusDurability)target.Durable.Value == TerminusDurability.None;
         }
 
+        /// <summary>
+        /// Gets the <see cref="Framing.Outcome"/> of a <see cref="DeliveryState"/>,
+        /// whether it's a transactional state with an outcome, or itself is an outcome.
+        /// </summary>
+        /// <param name="deliveryState">The <see cref="DeliveryState"/> to get an outcome from.</param>
+        /// <returns></returns>
+        public static Outcome Outcome(this DeliveryState deliveryState)
+        {
+            return deliveryState is TransactionalState transactionalState ? transactionalState.Outcome : deliveryState as Outcome;
+        }
+
         // settings
         /// <summary>
         /// Updates or inserts a value in begin.properties.
