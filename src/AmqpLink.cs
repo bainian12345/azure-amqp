@@ -807,7 +807,7 @@ namespace Microsoft.Azure.Amqp
                 {
                     lock (this.syncRoot)
                     {
-                        if (this.unsettledMap.TryGetValue(delivery.DeliveryTag, out Delivery existing) && existing.State is Outcome && delivery.State is Outcome)
+                        if (this.unsettledMap.TryGetValue(delivery.DeliveryTag, out Delivery existing) && Extensions.IsTerminal(existing.State) && Extensions.IsTerminal(delivery.State))
                         {
                             // this delivery is reached terminal outcome on both sides, which means it's already been processed.
                             // No need to process this delivery again anymore, just need to simply settle it with the sender side outcome.
@@ -1149,6 +1149,7 @@ namespace Microsoft.Azure.Amqp
                 delivery.Link = this;
                 delivery.DeliveryId = transfer.DeliveryId.Value;
                 delivery.DeliveryTag = transfer.DeliveryTag;
+                delivery.Aborted = transfer.Aborted == true;
                 delivery.Settled = transfer.Settled();
                 delivery.Batchable = transfer.Batchable();
                 delivery.MessageFormat = transfer.MessageFormat;

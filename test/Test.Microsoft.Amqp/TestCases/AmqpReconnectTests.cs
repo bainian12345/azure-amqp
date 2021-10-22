@@ -280,7 +280,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 false,
                 null,
                 true,
-                testDiffSettleModes: true);
+                testSettleOnSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 1 with sender/receiver swapped.
@@ -313,7 +313,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true);
         }
 
-        // Oasis AMQP doc section 3.4.6, example delivery tag 2 with sender/receiver swapped.
+        // Oasis AMQP doc section 3.4.6, example delivery tag 2 with sender/receiver swapped. This is essentially the same as example delivery tag 9.
         // Local receiver has DeliveryState = null, remote sender has DeliveryState = Received.
         // Expected behavior is that the sender will immediately resend this delivery with resume=true and aborted=true.
         [Fact]
@@ -373,7 +373,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 null,
                 true,
-                testDiffSettleModes: true);
+                testSettleOnSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 4 with sender/receiver swapped. This is essentially the same as example delivery tag 14.
@@ -389,7 +389,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 true,
                 null,
                 true,
-                testDiffSettleModes: true);
+                testSettleOnSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 5.
@@ -405,7 +405,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 false,
                 null,
                 true,
-                testDiffSettleModes: true);
+                testSettleOnSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 5 with sender/receiver swapped.
@@ -685,7 +685,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 false,
                 null,
                 true,
-                testDiffSettleModes: true);
+                testSettleOnSend: true);
         }
 
         // Test when local sender is in pending transactional delivery state and remote has DeliveryState = null.
@@ -1009,7 +1009,7 @@ namespace Test.Microsoft.Amqp.TestCases
         /// <param name="remoteDeliveryState">The actual value of the local unsettled delivery state.</param>
         /// <param name="expectSend">True if the sender is expected to resend the unsettled delivery after negotiation with the receiver unsettled map.</param>
         /// <param name="shouldAbortDelivery">True if the delivery sent by the sender should have the "Aborted" field set.</param>
-        /// <param name="testDiffSettleModes">True if the same test should be run again with link.SettleType = SettleMode.SettleOnSend (default is SettleMode.SettleOnReceive).</param>
+        /// <param name="testSettleOnSend">True if the same test should be run again with link.SettleType = SettleMode.SettleOnSend (default is SettleMode.SettleOnReceive).</param>
         /// <returns></returns>
         static async Task NegotiateUnsettledDeliveryTestAsync<T>(
             string testName,
@@ -1019,7 +1019,7 @@ namespace Test.Microsoft.Amqp.TestCases
             DeliveryState remoteDeliveryState,
             bool expectSend,
             bool shouldAbortDelivery = false,
-            bool testDiffSettleModes = false) where T : AmqpLink
+            bool testSettleOnSend = false) where T : AmqpLink
         {
             TestAmqpConnection connection = await OpenTestConnectionAsync(addressUri);
             try
@@ -1058,16 +1058,20 @@ namespace Test.Microsoft.Amqp.TestCases
                     Outcome remoteDeliveryOutcome = remoteDeliveryState?.Outcome();
                     Assert.Equal(localDeliveryOutcome != null && remoteDeliveryOutcome != null && localDeliveryOutcome.GetType() == remoteDeliveryOutcome.GetType(), transferSettled);
 
+                    if (txController != null)
+                    {
+                        await txController.DischargeAsync(txnId, false);
+                    }
+
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
-                        if (txController != null)
-                        {
-                            await txController.DischargeAsync(txnId, false);
-                        }
-
-                        // If transaction is involved, then the broker would still receive the message due to transaction completing,
-                        // even though the broker side receiver does not process the delivery because it's sent as settled.
-                        await TestReceivingMessageAsync(session, $"{testName}1", transferSettled && txController == null ? null : senderSideUnsettledMessage);
+                        var testDummyReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{testName}1-testReceiver", $"{testName}1");
+                        await TestReceivingMessageAsync(testDummyReceiver, transferSettled || shouldAbortDelivery ? null : senderSideUnsettledMessage);
+                    }
+                    else
+                    {
+                        // If the transfer was already aborted or settled, then the receiving link is expected to not process this transfer, therefore not receiving any message.
+                        await TestReceivingMessageAsync(localLink as ReceivingAmqpLink, transferSettled || shouldAbortDelivery ? null : senderSideUnsettledMessage);
                     }
                 }
                 else
@@ -1075,12 +1079,17 @@ namespace Test.Microsoft.Amqp.TestCases
                     Assert.True(receiverSideConnection.ReceivedPerformatives.Last.Value is Attach);
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
-                        await TestReceivingMessageAsync(session, $"{testName}1", null);
+                        var receiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{testName}1-testReceiver", $"{testName}1");
+                        await TestReceivingMessageAsync(receiver, null);
+                    }
+                    else
+                    {
+                        await TestReceivingMessageAsync(localLink as ReceivingAmqpLink, null);
                     }
                 }
 
                 await localLink.CloseAsync();
-                if (testDiffSettleModes)
+                if (testSettleOnSend)
                 {
                     if (localDeliveryState is TransactionalState || remoteDeliveryState is TransactionalState)
                     {
@@ -1093,16 +1102,22 @@ namespace Test.Microsoft.Amqp.TestCases
                     localUnsettledMessage = hasLocalDeliveryState ? AddClientUnsettledDelivery(unsettledMap, deliveryTag, localDeliveryState) : null;
                     remoteUnsettledMessage = hasRemoteDeliveryState ? AddBrokerUnsettledDelviery(testName, deliveryTag, remoteDeliveryState) : null;
 
-                    await OpenTestLinkAsync<T>(session, $"{testName}2", unsettledMap, SettleMode.SettleOnSend);
+                    localLink = await OpenTestLinkAsync<T>(session, $"{testName}2", unsettledMap, SettleMode.SettleOnSend);
                     Assert.True(receiverSideConnection.ReceivedPerformatives.Last.Value is Attach);
+
+                    if (txController != null)
+                    {
+                        await txController.DischargeAsync(txnId, false);
+                    }
+
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
-                        if (txController != null)
-                        {
-                            await txController.DischargeAsync(txnId, false);
-                        }
-
-                        await TestReceivingMessageAsync(session, $"{testName}2", null);
+                        var testDummyreceiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{testName}2-testReceiver", $"{testName}2");
+                        await TestReceivingMessageAsync(testDummyreceiver, null);
+                    }
+                    else
+                    {
+                        await TestReceivingMessageAsync(localLink as ReceivingAmqpLink, null);
                     }
                 }
             }
@@ -1133,13 +1148,14 @@ namespace Test.Microsoft.Amqp.TestCases
 
         static AmqpMessage AddBrokerUnsettledDelviery(string linkName, ArraySegment<byte> deliveryTag, DeliveryState deliveryState)
         {
-            AmqpMessage message = new BrokerMessage(AmqpMessage.Create("My Message"));
+            AmqpMessage message = AmqpMessage.Create("My Message");
             message.DeliveryTag = deliveryTag;
             message.State = deliveryState;
-            broker.MockUnsettledReceivingDeliveries.AddOrUpdate(linkName, (key) => new List<Delivery>() { message },
+            BrokerMessage brokerMessage = new BrokerMessage(message) { DeliveryTag = deliveryTag, State = deliveryState };
+            broker.MockUnsettledReceivingDeliveries.AddOrUpdate(linkName, (key) => new List<Delivery>() { brokerMessage },
                 (key, unsettledDeliveries) =>
                 {
-                    unsettledDeliveries.Add(message);
+                    unsettledDeliveries.Add(brokerMessage);
                     return unsettledDeliveries;
                 });
 
@@ -1187,13 +1203,12 @@ namespace Test.Microsoft.Amqp.TestCases
 
         /// <summary>
         /// Try receiving the message to verify that the message was indeed sent to the broker.
+        /// If <paramref name="expectedMessage"/> is null, then the receiver is expected to not receive any message.
         /// </summary>
-        /// <param name="session">The session used to create the test receiver.</param>
-        /// <param name="expectedMessage">The expected message to be received. Null ifthere should be no message received.</param>
-        /// <returns></returns>
-        static async Task TestReceivingMessageAsync(AmqpSession session, string linkName, AmqpMessage expectedMessage)
+        /// <param name="receiver">The receiver to receive the expected message with.</param>
+        /// <param name="expectedMessage">The expected message to be received. Null if there should be no message received.</param>
+        static async Task TestReceivingMessageAsync(ReceivingAmqpLink receiver, AmqpMessage expectedMessage)
         {
-            var receiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{linkName}-testReceiver", linkName);
             try
             {
                 AmqpMessage received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2));

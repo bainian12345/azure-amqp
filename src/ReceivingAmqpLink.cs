@@ -481,7 +481,7 @@ namespace Microsoft.Azure.Amqp
 
                     // If the delivery has reached terminal outcome on both sides, it means that the deliery has been already processed.
                     // We should mark them on the receiver side so when the sender sends them again, we can simply settle them and skip processing.
-                    if (localDeliveryState is Outcome && peerDeliveryState is Outcome)
+                    if (Extensions.IsTerminal(localDeliveryState) && Extensions.IsTerminal(peerDeliveryState))
                     {
                         if (this.Terminus.UnsettledMap.TryGetValue(deliveryTag, out Delivery delivery) && !delivery.Settled)
                         {
