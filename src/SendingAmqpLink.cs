@@ -245,7 +245,7 @@ namespace Microsoft.Azure.Amqp
         protected override bool OpenInternal()
         {
             bool syncComplete = base.OpenInternal();
-            if (this.Session.Connection.Settings.EnableLinkRecovery && this.State == AmqpObjectState.Opened)
+            if (AmqpLinkTerminusManager.IsRecoverableLink(this.Settings, false) && this.State == AmqpObjectState.Opened)
             {
                 this.ResendUnsettledDeliveriesUponOpen();
             }
@@ -258,7 +258,7 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         protected override void OnReceiveRemoteUnsettledDeliveries(Attach attach)
         {
-            if (this.Session.Connection.Settings.EnableLinkRecovery && this.Terminus?.Settings.Unsettled != null)
+            if (this.Terminus?.Settings.Unsettled != null)
             {
                 Fx.Assert(this.Terminus != null, "If link recovery is enabled, the link terminus should not be null.");
                 foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
@@ -370,7 +370,7 @@ namespace Microsoft.Azure.Amqp
                     }
                 }
 
-                if (this.Session.Connection.Settings.EnableLinkRecovery && this.State == AmqpObjectState.Opened)
+                if (this.State == AmqpObjectState.Opened)
                 {
                     this.ResendUnsettledDeliveriesUponOpen();
                 }

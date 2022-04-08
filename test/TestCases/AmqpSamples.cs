@@ -50,9 +50,15 @@ namespace Test.Microsoft.Azure.Amqp
         {
             string queue = "LinkRecoverySample";
             broker.AddQueue(queue);
-            var factory = new AmqpConnectionFactory();
-            // Create the AMQP connection with EnableLinkRecovery = true in its settings to allow link recovery.
-            var connection = await factory.OpenConnectionAsync(addressUri, new AmqpConnectionSettings() { EnableLinkRecovery = true }, TimeSpan.FromMinutes(1));
+
+            // Need to provide a AmqpLinkTerminusManager instance to ensure the uniqueness of the link endpoints and specify the desired expiration policy.
+            var terminusManager = new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.NEVER };
+            var amqpSettings = new AmqpSettings() { RuntimeProvider = new TestRuntimeProvider(terminusManager) };
+            var factory = new AmqpConnectionFactory(amqpSettings);
+
+            // Need to use the same containId later to identify and recover this link endpoint.
+            string containerId = Guid.NewGuid().ToString();
+            var connection = await factory.OpenConnectionAsync(addressUri, new AmqpConnectionSettings() { ContainerId = containerId }, TimeSpan.FromMinutes(1));
 
             try
             {
@@ -71,11 +77,11 @@ namespace Test.Microsoft.Azure.Amqp
                 // Try to complete the received message now. Should throw exception because the link is closed.
                 Assert.Throws<AmqpException>(() => receiver.AcceptMessage(message));
 
-                // We need to reconnect with the same connection and link settings for link recovery.
-                AmqpConnectionSettings connectionRecoverySettings = connection.CreateSettingsForRecovery();
+                // Need to reconnect with the same containerId and link terminus for link recovery.
+                AmqpConnectionSettings connectionRecoverySettings = new AmqpConnectionSettings() { ContainerId = connection.Settings.ContainerId };
                 connection = await factory.OpenConnectionAsync(addressUri, connectionRecoverySettings, AmqpConstants.DefaultTimeout);
                 session = await connection.OpenSessionAsync();
-                receiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(receiver);
+                receiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(receiver.Terminus);
                 receiver.AcceptMessage(message);
             }
             catch (Exception e)

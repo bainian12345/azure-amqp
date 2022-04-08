@@ -4,6 +4,7 @@
 namespace Microsoft.Azure.Amqp
 {
     using System;
+    using System.Collections.Concurrent;
     using Microsoft.Azure.Amqp.Framing;
     using Microsoft.Azure.Amqp.Transport;
 
@@ -43,6 +44,11 @@ namespace Microsoft.Azure.Amqp
     /// </summary>
     public interface ILinkFactory
     {
+        /// <summary>
+        /// This object is used to support link recovery. It may be null if link recovery is not needed.
+        /// </summary>
+        AmqpLinkTerminusManager LinkTerminusManager { get; }
+
         /// <summary>
         /// Creates an AMQP link.
         /// </summary>

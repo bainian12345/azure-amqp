@@ -85,7 +85,7 @@ namespace Microsoft.Azure.Amqp
         /// Opens a connection to the specified address using the provided <see cref="AmqpConnectionSettings"/>.
         /// </summary>
         /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
-        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="connectionSettings">existing settings which may be taken from a previously existing connection.</param>
         /// <param name="timeout">The operation timeout.</param>
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, AmqpConnectionSettings connectionSettings, TimeSpan timeout)
@@ -111,7 +111,7 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
         /// <param name="saslHandler">The SASL handler to perform authentication.</param>
-        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="connectionSettings">existing settings which may be taken from a previously existing connection.</param>
         /// <param name="timeout">The operation timeout.</param>
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, AmqpConnectionSettings connectionSettings, TimeSpan timeout)
@@ -146,7 +146,7 @@ namespace Microsoft.Azure.Amqp
         /// Opens a connection to the specified address using the provided <see cref="AmqpConnectionSettings"/>.
         /// </summary>
         /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
-        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="connectionSettings">existing settings which may be taken from a previously existing connection.</param>
         /// <param name="cancellationToken">A cancellation token that can be used to signal the asynchronous operation should be canceled.</param>
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, AmqpConnectionSettings connectionSettings, CancellationToken cancellationToken)
@@ -172,7 +172,7 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         /// <param name="addressUri">The address Uri. If it contains user info, SASL PLAIN is enabled.</param>
         /// <param name="saslHandler">The SASL handler to perform authentication.</param>
-        /// <param name="connectionSettings">Exsting settings which may be taken from a previously existing connection.</param>
+        /// <param name="connectionSettings">existing settings which may be taken from a previously existing connection.</param>
         /// <param name="cancellationToken">A cancellation token that can be used to signal the asynchronous operation should be canceled.</param>
         /// <returns>An AMQP connection.</returns>
         public Task<AmqpConnection> OpenConnectionAsync(Uri addressUri, SaslHandler saslHandler, AmqpConnectionSettings connectionSettings, CancellationToken cancellationToken)

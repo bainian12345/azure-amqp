@@ -4,6 +4,7 @@
 namespace Microsoft.Azure.Amqp
 {
     using System;
+    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Linq;
     using System.Threading;
@@ -113,6 +114,13 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
+        /// Upon creation of a new link, decide if it should be recoverable and have the corresponding settings by checking if there is a valid <see cref="AmqpLinkTerminusManager"/>.
+        /// </summary>
+        bool CanCreateRecoverableLinks => this.linkFactory?.LinkTerminusManager != null;
+
+        ConcurrentDictionary<AmqpLinkSettings, AmqpLink> RecoverableLinkEndpoints => this.linkFactory?.LinkTerminusManager?.RecoverableLinkEndpoints;
+
+        /// <summary>
         /// Opens an <see cref="AmqpLink"/> to a node at the given address.
         /// </summary>
         /// <typeparam name="T">The type of link. Only <see cref="SendingAmqpLink"/> and <see cref="ReceivingAmqpLink"/> are supported.</typeparam>
@@ -130,6 +138,13 @@ namespace Microsoft.Azure.Amqp
                 linkSettings.Role = false;
                 linkSettings.Source = new Source();
                 linkSettings.Target = new Target() { Address = address };
+
+                if (this.CanCreateRecoverableLinks)
+                {
+                    Source source = linkSettings.Source as Source;
+                    source.ExpiryPolicy = this.linkFactory.LinkTerminusManager.ExpirationPolicySymbol;
+                }
+
                 link = new SendingAmqpLink(linkSettings);
             }
             else if (linkType == typeof(ReceivingAmqpLink))
@@ -139,6 +154,13 @@ namespace Microsoft.Azure.Amqp
                 linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
                 linkSettings.AutoSendFlow = true;
                 linkSettings.Target = new Target();
+
+                if (this.CanCreateRecoverableLinks)
+                {
+                    Target target = linkSettings.Target as Target;
+                    target.ExpiryPolicy = this.linkFactory.LinkTerminusManager.ExpirationPolicySymbol;
+                }
+
                 link = new ReceivingAmqpLink(linkSettings);
             }
             else
@@ -154,32 +176,32 @@ namespace Microsoft.Azure.Amqp
         /// This overload should only be used for recovering links which have previously existed.
         /// </summary>
         /// <typeparam name="T">The type of link. Only <see cref="SendingAmqpLink"/> and <see cref="ReceivingAmqpLink"/> are supported.</typeparam>
-        /// <param name="previousLink">A previously existing link whose link settings and unsettled map would be used to reconstruct a new link.</param>
+        /// <param name="linkTerminus">A previously existing link whose link settings and unsettled map would be used to reconstruct a new link.</param>
         /// <returns>A task that returns a new link on completion.</returns>
-        public Task<T> RecoverLinkAsync<T>(AmqpLink previousLink) where T : AmqpLink
+        public Task<T> RecoverLinkAsync<T>(AmqpLinkTerminus linkTerminus) where T : AmqpLink
         {
-            if (!this.connection.Settings.EnableLinkRecovery)
+            if (!this.CanCreateRecoverableLinks)
             {
-                throw new InvalidOperationException($"To enable link recovery, the {nameof(this.connection.Settings.EnableLinkRecovery)} option on the connection must be set to true.");
+                throw new InvalidOperationException(Resources.AmqpLinkRecoveryNotEnabled);
             }
 
-            if (previousLink == null)
+            if (linkTerminus == null)
             {
-                throw new ArgumentNullException(nameof(previousLink));
+                throw new ArgumentNullException(nameof(linkTerminus));
             }
 
-            AmqpLinkSettings linkSettings = previousLink.Settings;
-            Fx.Assert(linkSettings != null, $"The link settings of the {nameof(previousLink)} must not be null.");
+            AmqpLinkSettings linkSettings = linkTerminus.Settings;
+            Fx.Assert(linkSettings != null, $"The link settings of the {nameof(linkTerminus)} must not be null.");
             Fx.Assert(!string.IsNullOrEmpty(linkSettings.LinkName), $"The link must have a valid link name");
             
-            if (previousLink.Terminus?.UnsettledMap != null)
+            if (linkTerminus.UnsettledMap != null)
             {
                 // prepare the new link's unsettled state map to be sent upon reconnect
                 linkSettings.Unsettled = new AmqpMap(
-                    previousLink.Terminus.UnsettledMap.ToDictionary(
+                    linkTerminus.UnsettledMap.ToDictionary(
                         kvPair => kvPair.Key,
                         kvPair => kvPair.Value.State),
-                    ByteArrayComparer.MapKeyByteArrayComparer.Instance);
+                    MapKeyByteArrayComparer.Instance);
             }
 
             AmqpLink newLink;
@@ -208,7 +230,7 @@ namespace Microsoft.Azure.Amqp
                 throw new NotSupportedException(linkType.Name);
             }
 
-            newLink.Terminus = previousLink.Terminus;
+            newLink.Terminus = linkTerminus;
             return this.AttachAndOpenLinkAsync<T>(newLink);
         }
 
@@ -485,7 +507,7 @@ namespace Microsoft.Azure.Amqp
 
         async Task<T> AttachAndOpenLinkAsync<T>(AmqpLink link) where T : AmqpLink
         {
-            if (this.Connection.Settings.EnableLinkRecovery && this.connection.RecoverableLinkEndpoints.GetOrAdd(link.Settings, link) != link)
+            if (this.CanCreateRecoverableLinks && this.RecoverableLinkEndpoints.GetOrAdd(link.Settings, link) != link)
             {
                 throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpRecoverableLinkNameInUse, link.Name, this.connection.Settings.ContainerId));
             }
@@ -637,12 +659,12 @@ namespace Microsoft.Azure.Amqp
                 {
                     AmqpLinkSettings linkSettings = AmqpLinkSettings.Create(attach);
 
-                    if (this.connection.Settings.EnableLinkRecovery)
+                    if (this.CanCreateRecoverableLinks)
                     {
                         // This is a recoverable link.
                         // There may be another link with the same name and role under a different session but same connection.
                         // We need to close the other link and open this one because this is a link stealing scenario.
-                        if (this.connection.RecoverableLinkEndpoints.TryRemove(linkSettings, out AmqpLink otherLink))
+                        if (this.RecoverableLinkEndpoints.TryRemove(linkSettings, out AmqpLink otherLink))
                         {
                             otherLink.SafeClose(new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, otherLink.Name, otherLink.Session.connection.Settings.ContainerId)));
                         }
@@ -653,9 +675,9 @@ namespace Microsoft.Azure.Amqp
                         return;
                     }
 
-                    if (this.connection.Settings.EnableLinkRecovery)
+                    if (this.CanCreateRecoverableLinks)
                     {
-                        AmqpLink getOrAddLink = this.connection.RecoverableLinkEndpoints.GetOrAdd(linkSettings, link);
+                        AmqpLink getOrAddLink = this.RecoverableLinkEndpoints.GetOrAdd(linkSettings, link);
                         if (getOrAddLink != link)
                         {
                             // there was a race, some other link has already attached with the same terminus.
@@ -748,7 +770,7 @@ namespace Microsoft.Azure.Amqp
 
             thisPtr.incomingChannel.OnLinkClosed(link);
             thisPtr.outgoingChannel.OnLinkClosed(link);
-            (thisPtr.Connection.RecoverableLinkEndpoints as ICollection<KeyValuePair<AmqpLinkSettings, AmqpLink>>)?.Remove(new KeyValuePair<AmqpLinkSettings, AmqpLink>(link.Settings, link));
+            (thisPtr.RecoverableLinkEndpoints as ICollection<KeyValuePair<AmqpLinkSettings, AmqpLink>>)?.Remove(new KeyValuePair<AmqpLinkSettings, AmqpLink>(link.Settings, link));
             AmqpTrace.Provider.AmqpRemoveLink(thisPtr, link, link.LocalHandle ?? 0u, link.RemoteHandle ?? 0u, link.Name);
         }
 

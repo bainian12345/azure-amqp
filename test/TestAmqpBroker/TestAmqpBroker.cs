@@ -60,6 +60,8 @@ namespace TestAmqpBroker
             }
         }
 
+        public AmqpLinkTerminusManager LinkTerminusManager { get; internal set; }
+
         /// <summary>
         /// Used to mock unsettled deliveries when the broker is on the receiving side. Key is the link name, values are the unsettled deliveries to be mocked.
         /// Be aware that the unsettled deliveries will apply to both the senders and receivers with the same link name.
@@ -297,7 +299,7 @@ namespace TestAmqpBroker
 
                 if (unsettled.Count > 0)
                 {
-                    terminus.Settings.Unsettled = new AmqpMap(unsettled, ByteArrayComparer.MapKeyByteArrayComparer.Instance);
+                    terminus.Settings.Unsettled = new AmqpMap(unsettled, MapKeyByteArrayComparer.Instance);
                     link.Terminus = terminus;
                 }
             }
@@ -557,7 +559,7 @@ namespace TestAmqpBroker
                     }
                     else if (consumer.SettleMode != SettleMode.SettleOnSend)
                     {
-                        message.LockedBy = consumer.Link.Session.Connection.Settings.EnableLinkRecovery ? consumer.Link.Settings.LinkName : consumer as object;
+                        message.LockedBy = consumer.Link.Terminus ?? consumer as object;
                         message.Node = this.messages.AddLast(message);
                     }
                 }
@@ -589,7 +591,7 @@ namespace TestAmqpBroker
                             }
                             else
                             {
-                                current.Value.LockedBy = consumer.Link.Session.Connection.Settings.EnableLinkRecovery ? consumer.Link.Settings.LinkName : consumer as object;
+                                current.Value.LockedBy = consumer.Link.Terminus ?? consumer as object;
                             }
 
                             consumer.Credit--;
@@ -639,7 +641,7 @@ namespace TestAmqpBroker
                         }
                         else
                         {
-                            message.LockedBy = consumer.Link.Session.Connection.Settings.EnableLinkRecovery ? consumer.Link.Settings.LinkName : consumer as object;
+                            message.LockedBy = consumer.Link.Terminus ?? consumer as object;
                         }
                     }
                 }

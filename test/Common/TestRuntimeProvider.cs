@@ -19,6 +19,16 @@ namespace Test.Microsoft.Azure.Amqp
         public static readonly ArraySegment<byte> EmptyBinary = new ArraySegment<byte>(new byte[0]);
 
         Queue<AmqpMessage> messages = new Queue<AmqpMessage>();
+        AmqpLinkTerminusManager amqpLinkTerminusManager;
+
+        public TestRuntimeProvider() { }
+
+        public TestRuntimeProvider(AmqpLinkTerminusManager amqpLinkTerminusManager)
+        {
+            this.amqpLinkTerminusManager = amqpLinkTerminusManager;
+        }
+
+        public AmqpLinkTerminusManager LinkTerminusManager { get => this.amqpLinkTerminusManager; }
 
         public Func<AmqpSession, AmqpLinkSettings, AmqpLink> LinkFactory { get; set; }
 

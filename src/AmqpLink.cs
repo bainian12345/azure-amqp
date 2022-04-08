@@ -689,7 +689,7 @@ namespace Microsoft.Azure.Amqp
         /// <remarks>All inflight deliveries are canceled.</remarks>
         protected override bool CloseInternal()
         {
-            if (this.Session.Connection.Settings.EnableLinkRecovery)
+            if (AmqpLinkTerminusManager.IsRecoverableLink(this.settings, false))
             {
                 lock (this.syncRoot)
                 {

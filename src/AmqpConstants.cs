@@ -37,6 +37,7 @@ namespace Microsoft.Azure.Amqp
         /// A string constant as the domain name for Apache extensions.
         /// </summary>
         public const string Apache = "apache.org";
+
         internal const string TimeSpanName = Vendor + ":timespan";
         internal const string UriName = Vendor + ":uri";
         internal const string DateTimeOffsetName = Vendor + ":datetime-offset";
@@ -122,5 +123,21 @@ namespace Microsoft.Azure.Amqp
         internal const uint DefaultLinkCredit = 1000;
         internal const uint DefaultNextTransferId = 1;
         internal const int SegmentSize = 512;
+
+        /// <summary> Determines when the link terminus object should be deleted and forgotten. </summary>
+        public static class TerminusExpirationPolicy
+        {
+            /// <summary> Delete and forget the link terminus when the <see cref="AmqpLink"/> is detached. </summary>
+            public static AmqpSymbol LinkDetach = new AmqpSymbol("link-detach");
+
+            /// <summary> Delete and forget the link terminus when the <see cref="AmqpSession"/> is ended. </summary>
+            public static AmqpSymbol SessionEnd = new AmqpSymbol("session-end");
+
+            /// <summary> Delete and forget the link terminus when the <see cref="AmqpConnection"/> is closed. </summary>
+            public static AmqpSymbol ConnectionClose = new AmqpSymbol("connection-close");
+
+            /// <summary> Keep the link terminus object for as long as possible. </summary>
+            public static AmqpSymbol Never = new AmqpSymbol("never");
+        }
     }
 }

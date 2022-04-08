@@ -468,7 +468,7 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         protected override void OnReceiveRemoteUnsettledDeliveries(Attach attach)
         {
-            if (this.Session.Connection.Settings.EnableLinkRecovery && this.Terminus?.Settings.Unsettled != null)
+            if (this.Terminus?.Settings.Unsettled != null)
             {
                 Fx.Assert(this.Terminus != null, "If link recovery is enabled, the link terminus should not be null.");
                 foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
@@ -504,7 +504,7 @@ namespace Microsoft.Azure.Amqp
         protected override void OnProcessTransfer(Delivery delivery, Transfer transfer, Frame frame)
         {
             bool shouldProcessMessage = !delivery.Aborted;
-            if (this.Session.Connection.Settings.EnableLinkRecovery)
+            if (AmqpLinkTerminusManager.IsRecoverableLink(this.Settings, false))
             {
                 Delivery existing;
                 lock (this.SyncRoot)

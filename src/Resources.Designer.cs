@@ -403,7 +403,7 @@ namespace Microsoft.Azure.Amqp {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to To enable link recovery, the {0} option on the connection must be set to true..
+        ///   Looks up a localized string similar to To enable link recovery, a valid link terminus manager must be provided with the runtime provider..
         /// </summary>
         internal static string AmqpLinkRecoveryNotEnabled {
             get {

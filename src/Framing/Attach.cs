@@ -214,7 +214,10 @@ namespace Microsoft.Azure.Amqp.Framing
             if (count-- > 0)
             {
                 AmqpMap mapWithGenericComparer = AmqpCodec.DecodeMap(buffer);
-                this.Unsettled = new AmqpMap(mapWithGenericComparer, ByteArrayComparer.MapKeyByteArrayComparer.Instance);
+                if (mapWithGenericComparer != null)
+                {
+                    this.Unsettled = new AmqpMap(mapWithGenericComparer, MapKeyByteArrayComparer.Instance);
+                }
             }
 
             if (count-- > 0)

@@ -26,7 +26,6 @@ namespace Microsoft.Azure.Amqp
         readonly HandleTable<AmqpSession> sessionsByRemoteHandle;
         HeartBeat heartBeat;
         Dictionary<Type, object> extensions;
-        ConcurrentDictionary<AmqpLinkSettings, AmqpLink> recoverableLinkEndpoints;
 
         /// <summary>
         /// The default factory instance to create connections.
@@ -94,10 +93,6 @@ namespace Microsoft.Azure.Amqp
             this.sessionsByRemoteHandle = new HandleTable<AmqpSession>(this.Settings.ChannelMax ?? AmqpConstants.DefaultMaxConcurrentChannels - 1);
             this.SessionFactory = this;
             this.heartBeat = HeartBeat.None;
-            if (connectionSettings.EnableLinkRecovery)
-            {
-                this.recoverableLinkEndpoints = new ConcurrentDictionary<AmqpLinkSettings, AmqpLink>();
-            }
         }
 
         /// <summary>
@@ -160,17 +155,17 @@ namespace Microsoft.Azure.Amqp
             }
         }
 
-        /// <summary>
-        /// The link termini used by link recovery. The combination of link name+role must be unique under the connection scope to enable link recovery.
-        /// Should only be initialized if link recovery is enabled on the connection settings.
-        /// </summary>
-        internal ConcurrentDictionary<AmqpLinkSettings, AmqpLink> RecoverableLinkEndpoints
-        {
-            get
-            {
-                return this.recoverableLinkEndpoints;
-            }
-        }
+        ///// <summary>
+        ///// The link termini used by link recovery. The combination of link name+role must be unique under the connection scope to enable link recovery.
+        ///// Should only be initialized if link recovery is enabled on the connection settings.
+        ///// </summary>
+        //internal ConcurrentDictionary<AmqpLinkSettings, AmqpLink> RecoverableLinkEndpoints
+        //{
+        //    get
+        //    {
+        //        return this.recoverableLinkEndpoints;
+        //    }
+        //}
 
         /// <summary>
         /// Creates a <see cref="AmqpSession"/> and adds it to the session collection.
@@ -474,16 +469,6 @@ namespace Microsoft.Azure.Amqp
                 this.Settings.AddProperty(AmqpConstants.OpenErrorName, Error.FromException(this.TerminalException));
             }
 
-            if (this.Settings.EnableLinkRecovery)
-            {
-                if (this.Settings.DesiredCapabilities == null)
-                {
-                    this.Settings.DesiredCapabilities = new Framing.Multiple<Encoding.AmqpSymbol>();
-                }
-
-                this.Settings.DesiredCapabilities.Add(AmqpConstants.LinkRecovery);
-            }
-
             this.SendCommand(this.Settings, 0, null);
         }
 
@@ -616,18 +601,6 @@ namespace Microsoft.Azure.Amqp
             if (open.MaxFrameSize.HasValue)
             {
                 this.Settings.MaxFrameSize = Math.Min(this.Settings.MaxFrameSize.Value, open.MaxFrameSize.Value);
-            }
-
-            if (open.DesiredCapabilities?.Contains(AmqpConstants.LinkRecovery) == true)
-            {
-                this.Settings.EnableLinkRecovery = true;
-                this.recoverableLinkEndpoints = this.recoverableLinkEndpoints ?? new ConcurrentDictionary<AmqpLinkSettings, AmqpLink>();
-                if (this.Settings.OfferedCapabilities == null)
-                {
-                    this.Settings.OfferedCapabilities = new Multiple<Encoding.AmqpSymbol>();
-                }
-
-                this.Settings.OfferedCapabilities.Add(AmqpConstants.LinkRecovery);
             }
         }
 

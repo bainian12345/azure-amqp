@@ -3,6 +3,7 @@
 
 namespace Microsoft.Azure.Amqp.Encoding
 {
+    using System;
     using System.Collections;
     using System.Collections.Generic;
     using System.Globalization;
@@ -27,12 +28,14 @@ namespace Microsoft.Azure.Amqp.Encoding
         public AmqpMap(IDictionary value)
             : this()
         {
-            if (value != null)
+            if (value == null)
             {
-                foreach (DictionaryEntry entry in value)
-                {
-                    this.Add(entry.Key is MapKey ? (MapKey)entry.Key : new MapKey(entry.Key), entry.Value);
-                }
+                throw new ArgumentNullException($"The dictionary used to initialize the {nameof(AmqpMap)} should not be null.");
+            }
+
+            foreach (DictionaryEntry entry in value)
+            {
+                this.Add(entry.Key is MapKey mapKey ? mapKey : new MapKey(entry.Key), entry.Value);
             }
         }
 
@@ -44,12 +47,15 @@ namespace Microsoft.Azure.Amqp.Encoding
         public AmqpMap(IDictionary value, IEqualityComparer<MapKey> comparer)
             : base(comparer)
         {
-            if (value != null)
+            if (value == null)
             {
-                foreach (DictionaryEntry entry in value)
-                {
-                    this.Add(entry.Key is MapKey ? (MapKey)entry.Key : new MapKey(entry.Key), entry.Value);
-                }
+                throw new ArgumentNullException($"The dictionary used to initialize the {nameof(AmqpMap)} should not be null.");
+            }
+
+            foreach (DictionaryEntry entry in value)
+            {
+                
+                this.Add(entry.Key is MapKey mapKey ? mapKey : new MapKey(entry.Key), entry.Value);
             }
         }
 
