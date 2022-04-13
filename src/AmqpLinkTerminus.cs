@@ -14,7 +14,7 @@
         /// </summary>
         /// <param name="settings">The <see cref="AmqpLinkSettings"/> that is associated with this link terminus object, which is used to uniquely identify it.</param>
         /// <param name="unsettledMap">The unsettled deliveries for this link terminus object.</param>
-        public AmqpLinkTerminus(AmqpLinkSettings settings, Dictionary<ArraySegment<byte>, Delivery> unsettledMap)
+        public AmqpLinkTerminus(AmqpLinkSettings settings, IDictionary<ArraySegment<byte>, Delivery> unsettledMap)
         {
             if (settings == null)
             {
@@ -34,7 +34,7 @@
         /// <summary>
         /// Returns the map of unsettled deliveries for this link terminus, where the key is the deliveryID and the value is the Delivery.
         /// </summary>
-        public Dictionary<ArraySegment<byte>, Delivery> UnsettledMap { get; }
+        public IDictionary<ArraySegment<byte>, Delivery> UnsettledMap { get; }
 
         /// <summary>
         /// Check if this link terminus object is equal to the other object provided.

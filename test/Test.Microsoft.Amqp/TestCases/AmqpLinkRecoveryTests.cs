@@ -123,109 +123,113 @@ namespace Test.Microsoft.Amqp.TestCases
             }
         }
 
-        // Test opening new two senders using the same link name without EnableLinkRecovery. Should be able to create both.
+        // Test opening new two senders using the same link name without EnableLinkRecovery. Should be able to create both because we are not going through the link recovery path.
         [Fact]
         public async Task LinkRecoveryNotEnabledSendersNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(false, true, false, false);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(linkRecoveryEnabled: false, openNewLink: true, shouldClose: false, shouldAbort: false);
         }
 
-        // Test opening new two receivers using the same link name without EnableLinkRecovery. Should be able to create both.
+        // Test opening new two receivers using the same link name without EnableLinkRecovery. Should be able to create both because we are not going through the link recovery path.
         [Fact]
         public async Task LinkRecoveryNotEnabledReceiversNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(false, true, false, false);
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: false, openNewLink: true, shouldClose: false, shouldAbort: false);
         }
 
         // Test opening two new senders using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        // Should throw exception upon opening the second one because first one still open with the same link terminus.
         [Fact]
         public async Task NewSendersNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, true, false, false);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(linkRecoveryEnabled: true, openNewLink: true, shouldClose: false, shouldAbort: false);
         }
 
         // Test opening two new receivers using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        // Should throw exception upon opening the second one because first one still open with the same link terminus.
         [Fact]
         public async Task NewReceiversNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, true, false, false);
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: true, shouldClose: false, shouldAbort: false);
         }
 
-        // Test opening a sender then recovering another sender using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        // Test opening a sender then recovering another sender using the same link name with EnableLinkRecovery.
+        // Should throw exception upon opening the second one because first one still open with the same link terminus.
         [Fact]
         public async Task RecoveringSenderNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, false, false, false);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(linkRecoveryEnabled: true, openNewLink: false, shouldClose: false, shouldAbort: false);
         }
 
-        // Test opening a sender then recovering another receiver using the same link name with EnableLinkRecovery. Should throw exception upon opening the second one.
+        // Test opening a sender then recovering another receiver using the same link name with EnableLinkRecovery.
+        // Should throw exception upon opening the second one because first one still open with the same link terminus.
         [Fact]
         public async Task RecoveringReceiverNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, false, false, false);
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: false, shouldClose: false, shouldAbort: false);
         }
 
         // Test opening a sender then a receiver using the same link name with EnableLinkRecovery. Should be able to create both.
         [Fact]
         public async Task SenderAndReceiverNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, ReceivingAmqpLink>(true, true, false, false);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: true, shouldClose: false, shouldAbort: false);
         }
 
         // Test opening and closing a sender then opening another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task CreateNewSenderAfterClosedSenderNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, true, true, false);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(linkRecoveryEnabled: true, openNewLink: true, shouldClose: true, shouldAbort: false);
         }
 
         // Test opening and closing a receiver then opening another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task CreateNewReceiverAfterClosedReceiverNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, true, true, false);
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: true, shouldClose: true, shouldAbort: false);
         }
 
         // Test opening and aborting a sender then opening another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task CreateNewSenderAfterAbortedSenderNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, true, false, true);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(linkRecoveryEnabled: true, openNewLink: true, shouldClose: false, shouldAbort: true);
         }
 
         // Test opening and aborting a receiver then opening another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task CreateNewReceiverAfterAbortedReceiverNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, true, false, true);
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: true, shouldClose: false, shouldAbort: true);
         }
 
         // Test opening and closing a sender then recovering another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task ReceoverSenderAfterClosedSenderNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, false, true, false);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(linkRecoveryEnabled: true, openNewLink: false, shouldClose: true, shouldAbort: false);
         }
 
         // Test opening and closing a receiver then recovering another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task RecoverReceiverAfterClosedReceiverNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, false, true, false);
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: false, shouldClose: true, shouldAbort: false);
         }
 
         // Test opening and aborting a sender then opening another sender using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task RecoverSenderAfterAbortedSenderNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(true, false, false, true);
+            await LinkTerminusUniquenessTestAsync<SendingAmqpLink, SendingAmqpLink>(linkRecoveryEnabled: true, openNewLink: false, shouldClose: false, shouldAbort: true);
         }
 
         // Test opening and aborting a receiver then recovering another receiver using the same link name with EnableLinkRecovery. Should be able to create the second one.
         [Fact]
         public async Task RecoverReceiverAfterAbortedReceiverNameUniquenessTest()
         {
-            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(true, false, false, true);
+            await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: false, shouldClose: false, shouldAbort: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 1.
@@ -235,12 +239,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderNullDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderNullDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                null,
-                false,
-                null,
-                true,
+                testName: nameof(ClientSenderNullDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: true,
                 testSettleOnSend: true);
         }
 
@@ -251,12 +255,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverNullDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverNullDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                null,
-                false,
-                null,
-                false);
+                testName: nameof(ClientReceiverNullDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 2
@@ -266,12 +270,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderNullDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderNullDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                null,
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true);
+                testName: nameof(ClientSenderNullDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 2 with sender/receiver swapped. This is essentially the same as example delivery tag 9.
@@ -281,12 +285,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverNullDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverNullDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                null,
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
+                testName: nameof(ClientReceiverNullDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -297,12 +301,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderNullDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderNullDeliveryStateBrokerTerminalDeliveryStateTest),
-                true,
-                null,
-                true,
-                AmqpConstants.AcceptedOutcome,
-                false);
+                testName: nameof(ClientSenderNullDeliveryStateBrokerTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 3 with sender/receiver swapped. This is essentially the same as example delivery tag 14.
@@ -312,12 +316,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverNullDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverNullDeliveryStateBrokerTerminalDeliveryStateTest),
-                true,
-                null,
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
+                testName: nameof(ClientReceiverNullDeliveryStateBrokerTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -328,12 +332,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderNullDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderNullDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                null,
-                true,
-                null,
-                true,
+                testName: nameof(ClientSenderNullDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: true,
                 testSettleOnSend: true);
         }
 
@@ -344,12 +348,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverNullDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverNullDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                null,
-                true,
-                null,
-                true,
+                testName: nameof(ClientReceiverNullDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: null,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: true,
                 testSettleOnSend: true);
         }
 
@@ -360,12 +364,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderReceivedDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderReceivedDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                false,
-                null,
-                true,
+                testName: nameof(ClientSenderReceivedDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: true,
                 testSettleOnSend: true);
         }
 
@@ -376,13 +380,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverNoDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverNoDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                false,
-                null,
-                false);
-
+                testName: nameof(ClientReceiverNoDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 6, 7.
@@ -392,12 +395,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderReceivedDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderReceivedDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
+                testName: nameof(ClientSenderReceivedDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -408,12 +411,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverReceivedDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverReceivedDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
+                testName: nameof(ClientReceiverReceivedDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -424,12 +427,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderReceivedDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderReceivedDeliveryStateBrokerTerminalDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
-                AmqpConstants.AcceptedOutcome,
-                false);
+                testName: nameof(ClientSenderReceivedDeliveryStateBrokerTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 8 with sender/receiver swapped. This is essentially the same as example delivery tag 11.
@@ -439,12 +442,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverReceivedDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverReceivedDeliveryStateBrokerTerminalDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
+                testName: nameof(ClientReceiverReceivedDeliveryStateBrokerTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -455,12 +458,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderReceivedDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderReceivedDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
-                null,
-                true,
+                testName: nameof(ClientSenderReceivedDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -471,12 +474,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverReceivedDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverReceivedDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
-                null,
-                true);
+                testName: nameof(ClientReceiverReceivedDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.ReceivedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 10
@@ -486,12 +489,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                false,
-                null,
-                false);
+                testName: nameof(ClientSenderTerminalDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 10 with sender/receiver swapped.
@@ -501,12 +504,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                false,
-                null,
-                false);
+                testName: nameof(ClientReceiverTerminalDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 11
@@ -516,12 +519,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
+                testName: nameof(ClientSenderTerminalDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -532,12 +535,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                AmqpConstants.ReceivedOutcome,
-                false);
+                testName: nameof(ClientReceiverTerminalDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: false);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 12
@@ -547,12 +550,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalDeliveryStateBrokerSameTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalDeliveryStateBrokerSameTerminalDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true);
+                testName: nameof(ClientSenderTerminalDeliveryStateBrokerSameTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 12 with sender/receiver swapped. 
@@ -562,12 +565,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalDeliveryStateBrokerSameTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalDeliveryStateBrokerSameTerminalDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true);
+                testName: nameof(ClientReceiverTerminalDeliveryStateBrokerSameTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 13
@@ -577,12 +580,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalDeliveryStateBrokerDiffTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalDeliveryStateBrokerDiffTerminalDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                AmqpConstants.RejectedOutcome,
-                true);
+                testName: nameof(ClientSenderTerminalDeliveryStateBrokerDiffTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.RejectedOutcome,
+                expectSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 13 with sender/receiver swapped.
@@ -595,12 +598,12 @@ namespace Test.Microsoft.Amqp.TestCases
             // because broker will interpret it as actually releasing the lock on the message,
             // and resend the delivery again to the next available consumer, which is this test link (for a third time).
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalDeliveryStateBrokerDiffTerminalDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                AmqpConstants.RejectedOutcome,
-                true);
+                testName: nameof(ClientReceiverTerminalDeliveryStateBrokerDiffTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.RejectedOutcome,
+                expectSend: true);
         }
 
         // Oasis AMQP doc section 3.4.6, example delivery tag 14.
@@ -610,12 +613,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                null,
-                true,
+                testName: nameof(ClientSenderTerminalDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -626,12 +629,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
-                null,
-                false);
+                testName: nameof(ClientReceiverTerminalDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: AmqpConstants.AcceptedOutcome,
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Test when local sender is in pending transactional delivery state and remote has no record of this delivery.
@@ -640,12 +643,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTransactionalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTransactionalDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                false,
-                null,
-                true,
+                testName: nameof(ClientSenderTransactionalDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: true,
                 testSettleOnSend: true);
         }
 
@@ -656,12 +659,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTransactionalDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTransactionalDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                null,
-                true,
+                testName: nameof(ClientSenderTransactionalDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -672,12 +675,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
+                testName: nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -687,12 +690,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTransactionalDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTransactionalDeliveryStateBrokerTerminalDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
+                testName: nameof(ClientSenderTransactionalDeliveryStateBrokerTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -704,12 +707,12 @@ namespace Test.Microsoft.Amqp.TestCases
         {
             var txnId = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                new TransactionalState(),
-                true,
+                testName: nameof(ClientSenderTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState(),
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -720,12 +723,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                false);
+                testName: nameof(ClientSenderTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                expectSend: false);
         }
 
         // Test when local sender is in terminal transactional delivery state and remote receiver does not have this delivery.
@@ -735,12 +738,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalTransactionalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                false,
-                null,
-                false);
+                testName: nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Test when local sender is in terminal transactional delivery state and remote receiver is in pending transactional delivery state.
@@ -750,12 +753,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true,
-                new TransactionalState(),
-                true,
+                testName: nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState(),
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -766,12 +769,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true);
+                testName: nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                expectSend: true);
         }
 
         // Test when local sender and remote receiver are both in the different terminal transactional states.
@@ -781,12 +784,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientSenderTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<SendingAmqpLink>(
-                nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.RejectedOutcome },
-                true);
+                testName: nameof(ClientSenderTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState() { Outcome = AmqpConstants.RejectedOutcome },
+                expectSend: true);
         }
 
         // Test when local receiver is in pending transactional delivery state and remote has no record of this delivery.
@@ -795,12 +798,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTransactionalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                false,
-                null,
-                false);
+                testName: nameof(ClientReceiverTransactionalDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Test when local receiver is in pending transactional delivery state and remote has DeliveryState = null.
@@ -809,12 +812,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTransactionalDeliveryStateBrokerNullDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerNullDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                null,
-                true,
+                testName: nameof(ClientReceiverTransactionalDeliveryStateBrokerNullDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: null,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -824,12 +827,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                AmqpConstants.ReceivedOutcome,
-                true,
+                testName: nameof(ClientReceiverTransactionalDeliveryStateBrokerReceivedDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.ReceivedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -839,12 +842,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTransactionalDeliveryStateBrokerTerminalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerTerminalDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                AmqpConstants.AcceptedOutcome,
-                true,
+                testName: nameof(ClientReceiverTransactionalDeliveryStateBrokerTerminalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: AmqpConstants.AcceptedOutcome,
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -855,12 +858,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                new TransactionalState(),
-                true,
+                testName: nameof(ClientReceiverTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState(),
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -871,12 +874,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState(),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true,
+                testName: nameof(ClientReceiverTransactionalDeliveryStateBrokerTerminalTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState(),
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                expectSend: true,
                 shouldAbortDelivery: true);
         }
 
@@ -887,12 +890,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true,
-                new TransactionalState(),
-                false);
+                testName: nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState(),
+                expectSend: false);
         }
 
         // Test when local receiver is in terminal transactional delivery state and remote sender does not have this delivery.
@@ -901,12 +904,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalTransactionalDeliveryStateBrokerNoDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerNoDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                false,
-                null,
-                false);
+                testName: nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerNoDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: false,
+                remoteDeliveryState: null,
+                expectSend: false);
         }
 
         // Test when local receiver and remote sender are both in the same terminal transactional state.
@@ -916,12 +919,12 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true);
+                testName: nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerSameTerminalTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                expectSend: true);
         }
 
         // Test when local receiver and remote sender are both in the same terminal transactional state.
@@ -931,54 +934,16 @@ namespace Test.Microsoft.Amqp.TestCases
         public async Task ClientReceiverTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest()
         {
             await NegotiateUnsettledDeliveryTestAsync<ReceivingAmqpLink>(
-                nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest),
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
-                true,
-                new TransactionalState() { Outcome = AmqpConstants.RejectedOutcome },
-                true);
-        }
-
-        [Fact]
-        public async Task CannotRecoverOpenLinkTest()
-        {
-            await CannotRecoverOpenLinkTestCase<SendingAmqpLink>();
-            await CannotRecoverOpenLinkTestCase<ReceivingAmqpLink>();
-        }
-
-        async Task CannotRecoverOpenLinkTestCase<T>() where T : AmqpLink
-        {
-            string linkName = Guid.NewGuid().ToString();
-            AmqpConnection connection = await OpenTestConnectionAsync(addressUri);
-            AmqpConnection brokerConnection = broker.FindConnection(connection.Settings.ContainerId);
-            try
-            {
-                AmqpSession session = await connection.OpenSessionAsync();
-                var localLink = await session.OpenLinkAsync<T>(linkName, addressUri.AbsoluteUri);
-                
-                // should not be able to recover a still open link because the link terminus info with the unsettled map is captured during close.
-                await Assert.ThrowsAsync<ArgumentNullException>(() => session.RecoverLinkAsync<T>(localLink.Terminus));
-                
-                // close the link and recover it now, should work.
-                await localLink.CloseAsync();
-                var newLocalLink = await session.RecoverLinkAsync<T>(localLink.Terminus);
-
-                // the recovered link should be blocked from recovering as well when it's still open.
-                await Assert.ThrowsAsync<ArgumentNullException>(() => session.RecoverLinkAsync<T>(newLocalLink.Terminus));
-
-                // try closing the link from the remote side. Should be able to recover it now.
-                broker.LinkTerminusManager.RecoverableLinkEndpoints.TryGetValue(new AmqpLinkSettings() { LinkName = localLink.Name, Role = !localLink.Settings.Role }, out AmqpLink brokerlink);
-                await brokerlink.CloseAsync();
-                newLocalLink = await session.RecoverLinkAsync<T>(localLink.Terminus);
-            }
-            finally
-            {
-                await connection.CloseAsync();
-            }
+                testName: nameof(ClientReceiverTerminalTransactionalDeliveryStateBrokerDiffTerminalTransactionalDeliveryStateTest),
+                hasLocalDeliveryState: true,
+                localDeliveryState: new TransactionalState() { Outcome = AmqpConstants.AcceptedOutcome },
+                hasRemoteDeliveryState: true,
+                remoteDeliveryState: new TransactionalState() { Outcome = AmqpConstants.RejectedOutcome },
+                expectSend: true);
         }
 
         /// <summary>
-        /// Test if the terminus uniqueness under a connection would be enforced given links with the same link names.
+        /// Test if the terminus uniqueness under two different sessions but a same connection would be enforced given links with the same link names.
         /// </summary>
         /// <typeparam name="T1">The type of link1.</typeparam>
         /// <typeparam name="T2">The type of link2.</typeparam>
@@ -1008,8 +973,10 @@ namespace Test.Microsoft.Amqp.TestCases
                     link1.Abort();
                 }
 
+                // prepare the link terminus object used for link recovery. The link terminus object is only created if the link closes gracefully and link recovery is enabled.
+                AmqpLinkTerminus linkTerminus = shouldClose ? link1.Terminus : new AmqpLinkTerminus(link1.Settings, link1.UnsettledMap);
                 bool shouldThrow = linkRecoveryEnabled && !shouldClose && !shouldAbort && typeof(T1) == typeof(T2);
-                Task openLink2Task = openNewLink ? recoverableSession2.OpenLinkAsync<T2>(linkName, addressUri.AbsoluteUri) : recoverableSession2.RecoverLinkAsync<T2>(link1.Terminus);
+                Task openLink2Task = openNewLink ? recoverableSession2.OpenLinkAsync<T2>(linkName, addressUri.AbsoluteUri) : recoverableSession2.RecoverLinkAsync<T2>(linkTerminus);
                 if (shouldThrow)
                 {
                     await Assert.ThrowsAsync<InvalidOperationException>(() => openLink2Task);
@@ -1210,7 +1177,7 @@ namespace Test.Microsoft.Amqp.TestCases
             {
                 linkSettings.LinkName = linkName;
                 linkSettings.Role = false;
-                linkSettings.Source = new Source();
+                linkSettings.Source = new Source() { ExpiryPolicy = session.LinkFactory.LinkTerminusManager.ExpirationPolicySymbol };
                 linkSettings.Target = new Target() { Address = linkName };
             }
             else if (linkType == typeof(ReceivingAmqpLink))
@@ -1220,7 +1187,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 linkSettings.Source = new Source() { Address = linkName };
                 linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
                 linkSettings.AutoSendFlow = true;
-                linkSettings.Target = new Target();
+                linkSettings.Target = new Target() { ExpiryPolicy = session.LinkFactory.LinkTerminusManager.ExpirationPolicySymbol };
             }
             else
             {

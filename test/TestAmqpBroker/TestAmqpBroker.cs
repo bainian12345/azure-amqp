@@ -256,30 +256,42 @@ namespace TestAmqpBroker
             AmqpLink link;
             if (isReceiver)
             {
-                if (settings.Target is Target && ((Target)settings.Target).Dynamic())
+                if (settings.Target is Target target)
                 {
-                    name = string.Format("$dynamic.{0}", Interlocked.Increment(ref this.dynamicId));
-                    lock (this.queues)
+                    if (target.Dynamic())
                     {
-                        this.queues.Add(name, new TestQueue(this));
+                        name = string.Format("$dynamic.{0}", Interlocked.Increment(ref this.dynamicId));
+                        lock (this.queues)
+                        {
+                            this.queues.Add(name, new TestQueue(this));
+                        }
+
+                        target.Address = name;
                     }
 
-                    ((Target)settings.Target).Address = name;
+                    // set the expiration policy to whatever the client is.
+                    target.ExpiryPolicy = ((Source)settings.Source).ExpiryPolicy;
                 }
 
                 link = new ReceivingAmqpLink(session, settings);
             }
             else
             {
-                if (((Source)settings.Source).Dynamic())
+                if (settings.Source is Source source)
                 {
-                    name = string.Format("$dynamic.{0}", Interlocked.Increment(ref this.dynamicId));
-                    lock (this.queues)
+                    if (source.Dynamic())
                     {
-                        this.queues.Add(name, new TestQueue(this));
+                        name = string.Format("$dynamic.{0}", Interlocked.Increment(ref this.dynamicId));
+                        lock (this.queues)
+                        {
+                            this.queues.Add(name, new TestQueue(this));
+                        }
+
+                        source.Address = name;
                     }
 
-                    ((Source)settings.Source).Address = name;
+                    // set the expiration policy to whatever the client is.
+                    source.ExpiryPolicy = ((Target)settings.Target).ExpiryPolicy;
                 }
 
                 link = new SendingAmqpLink(session, settings);

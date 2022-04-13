@@ -209,6 +209,8 @@ namespace Microsoft.Azure.Amqp
 
         internal AmqpLinkTerminus Terminus { get; set; }
 
+        internal AmqpSymbol TerminusExpiryPolicy => this.IsReceiver ? ((Target)this.Settings.Target).ExpiryPolicy : ((Source)this.Settings.Source).ExpiryPolicy;
+
         /// <summary>
         /// Attaches the link to a session.
         /// </summary>
