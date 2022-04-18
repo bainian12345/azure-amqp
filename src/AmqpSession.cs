@@ -114,13 +114,6 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
-        /// Upon creation of a new link, decide if it should be recoverable and have the corresponding settings by checking if there is a valid <see cref="AmqpLinkTerminusManager"/>.
-        /// </summary>
-        bool CanCreateRecoverableLinks => this.linkFactory?.LinkTerminusManager != null;
-
-        ConcurrentDictionary<AmqpLinkSettings, AmqpLink> RecoverableLinkEndpoints => this.linkFactory?.LinkTerminusManager?.RecoverableLinkEndpoints;
-
-        /// <summary>
         /// Opens an <see cref="AmqpLink"/> to a node at the given address.
         /// </summary>
         /// <typeparam name="T">The type of link. Only <see cref="SendingAmqpLink"/> and <see cref="ReceivingAmqpLink"/> are supported.</typeparam>
@@ -139,7 +132,7 @@ namespace Microsoft.Azure.Amqp
                 linkSettings.Source = new Source();
                 linkSettings.Target = new Target() { Address = address };
 
-                if (this.CanCreateRecoverableLinks)
+                if (this.Connection.LinkRecoveryEnabled)
                 {
                     Source source = linkSettings.Source as Source;
                     source.ExpiryPolicy = this.linkFactory.LinkTerminusManager.ExpirationPolicySymbol;
@@ -155,7 +148,7 @@ namespace Microsoft.Azure.Amqp
                 linkSettings.AutoSendFlow = true;
                 linkSettings.Target = new Target();
 
-                if (this.CanCreateRecoverableLinks)
+                if (this.Connection.LinkRecoveryEnabled)
                 {
                     Target target = linkSettings.Target as Target;
                     target.ExpiryPolicy = this.linkFactory.LinkTerminusManager.ExpirationPolicySymbol;
@@ -180,7 +173,7 @@ namespace Microsoft.Azure.Amqp
         /// <returns>A task that returns a new link on completion.</returns>
         public Task<T> RecoverLinkAsync<T>(AmqpLinkTerminus linkTerminus) where T : AmqpLink
         {
-            if (!this.CanCreateRecoverableLinks)
+            if (!this.Connection.LinkRecoveryEnabled)
             {
                 throw new InvalidOperationException(Resources.AmqpLinkRecoveryNotEnabled);
             }
@@ -252,6 +245,11 @@ namespace Microsoft.Azure.Amqp
                 if (this.links.ContainsKey(link.Name))
                 {
                     throw new AmqpException(AmqpErrorCode.ResourceLocked, AmqpResources.GetString(AmqpResources.AmqpLinkNameInUse, link.Name, this.LocalChannel));
+                }
+
+                if (this.Connection.LinkRecoveryEnabled && !this.Connection.LinkTerminusManager.TryAdd(link.Settings, link))
+                {
+                    throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpRecoverableLinkNameInUse, link.Name, this.connection.Settings.ContainerId));
                 }
 
                 link.Closed += onLinkClosed;
@@ -507,11 +505,6 @@ namespace Microsoft.Azure.Amqp
 
         async Task<T> AttachAndOpenLinkAsync<T>(AmqpLink link) where T : AmqpLink
         {
-            if (this.CanCreateRecoverableLinks && this.RecoverableLinkEndpoints.GetOrAdd(link.Settings, link) != link)
-            {
-                throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpRecoverableLinkNameInUse, link.Name, this.connection.Settings.ContainerId));
-            }
-
             try
             {
                 link.AttachTo(this);
@@ -659,12 +652,12 @@ namespace Microsoft.Azure.Amqp
                 {
                     AmqpLinkSettings linkSettings = AmqpLinkSettings.Create(attach);
 
-                    if (this.CanCreateRecoverableLinks)
+                    if (this.Connection.LinkRecoveryEnabled)
                     {
                         // This is a recoverable link.
                         // There may be another link with the same name and role under a different session but same connection.
                         // We need to close the other link and open this one because this is a link stealing scenario.
-                        if (this.RecoverableLinkEndpoints.TryRemove(linkSettings, out AmqpLink otherLink))
+                        if (this.linkFactory.LinkTerminusManager.TryRemove(linkSettings, out AmqpLink otherLink))
                         {
                             otherLink.SafeClose(new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, otherLink.Name, otherLink.Session.connection.Settings.ContainerId)));
                         }
@@ -673,16 +666,6 @@ namespace Microsoft.Azure.Amqp
                     if (!this.TryCreateRemoteLink(linkSettings, out link))
                     {
                         return;
-                    }
-
-                    if (this.CanCreateRecoverableLinks)
-                    {
-                        AmqpLink getOrAddLink = this.RecoverableLinkEndpoints.GetOrAdd(linkSettings, link);
-                        if (getOrAddLink != link)
-                        {
-                            // there was a race, some other link has already attached with the same terminus.
-                            throw new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, link.Name, link.Session.connection.Settings.ContainerId));
-                        }
                     }
                 }
                 else
@@ -770,7 +753,12 @@ namespace Microsoft.Azure.Amqp
 
             thisPtr.incomingChannel.OnLinkClosed(link);
             thisPtr.outgoingChannel.OnLinkClosed(link);
-            (thisPtr.RecoverableLinkEndpoints as ICollection<KeyValuePair<AmqpLinkSettings, AmqpLink>>)?.Remove(new KeyValuePair<AmqpLinkSettings, AmqpLink>(link.Settings, link));
+
+            if (thisPtr.Connection.LinkRecoveryEnabled && (link.TerminusExpiryPolicy.Equals(AmqpConstants.TerminusExpirationPolicy.LinkDetach) || link.TerminusExpiryPolicy.Value == null))
+            {
+                thisPtr.Connection.LinkTerminusManager.ExpireLink(link);
+            }
+
             AmqpTrace.Provider.AmqpRemoveLink(thisPtr, link, link.LocalHandle ?? 0u, link.RemoteHandle ?? 0u, link.Name);
         }
 

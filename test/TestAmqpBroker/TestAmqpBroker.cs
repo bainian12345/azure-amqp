@@ -47,6 +47,7 @@ namespace TestAmqpBroker
             this.connections = new Dictionary<SequenceNumber, AmqpConnection>();
             this.queues = new Dictionary<string, TestQueue>();
             this.MockUnsettledReceivingDeliveries = new ConcurrentDictionary<string, ICollection<Delivery>>();
+            this.LinkTerminusManager = new AmqpLinkTerminusManager();
             if (queues != null)
             {
                 foreach (string q in queues)

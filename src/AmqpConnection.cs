@@ -155,6 +155,16 @@ namespace Microsoft.Azure.Amqp
             }
         }
 
+        /// <summary>
+        /// A <see cref="AmqpLinkTerminusManager"/> which tracks the link terminus instances that may be used for link recovery.
+        /// </summary>
+        internal AmqpLinkTerminusManager LinkTerminusManager => this.AmqpSettings.RuntimeProvider?.LinkTerminusManager;
+
+        /// <summary>
+        /// Upon creation of a new link, decide if could have recoverable link terminus and have the corresponding settings by checking if there is a valid <see cref="AmqpLinkTerminusManager"/>.
+        /// </summary>
+        internal bool LinkRecoveryEnabled => this.LinkTerminusManager != null;
+
         ///// <summary>
         ///// The link termini used by link recovery. The combination of link name+role must be unique under the connection scope to enable link recovery.
         ///// Should only be initialized if link recovery is enabled on the connection settings.
@@ -648,6 +658,11 @@ namespace Microsoft.Azure.Amqp
                     {
                         thisPtr.sessionsByRemoteHandle.Remove(session.RemoteChannel.Value);
                     }
+                }
+
+                if (thisPtr.LinkRecoveryEnabled)
+                {
+                    thisPtr.LinkTerminusManager.ExpireSession(session);
                 }
 
                 AmqpTrace.Provider.AmqpRemoveSession(thisPtr, session, session.LocalChannel, session.RemoteChannel ?? 0);

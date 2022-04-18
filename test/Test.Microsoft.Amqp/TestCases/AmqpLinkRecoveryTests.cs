@@ -40,7 +40,7 @@ namespace Test.Microsoft.Amqp.TestCases
             AmqpConnection connection = null;
             try
             {
-                connection = await OpenTestConnectionAsync(addressUri);
+                connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
                 AmqpSession session = await connection.OpenSessionAsync();
                 SendingAmqpLink originalSender = await session.OpenLinkAsync<SendingAmqpLink>(nameof(SenderRecoveryTest) + Guid.NewGuid().ToString(), nameof(SenderRecoveryTest));
                 originalSender.Settings.AddProperty("MyProp", "MyPropValue");
@@ -83,7 +83,7 @@ namespace Test.Microsoft.Amqp.TestCases
             AmqpConnection connection = null;
             try
             {
-                connection = await OpenTestConnectionAsync(addressUri);
+                connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
                 AmqpSession session = await connection.OpenSessionAsync();
                 ReceivingAmqpLink originalReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>(nameof(ReceiverRecoveryTest) + Guid.NewGuid().ToString(), nameof(ReceiverRecoveryTest));
                 originalReceiver.Settings.AddProperty("MyProp", "MyPropValue");
@@ -957,7 +957,16 @@ namespace Test.Microsoft.Amqp.TestCases
             where T2 : AmqpLink
         {
             string linkName = Guid.NewGuid().ToString();
-            AmqpConnection connection = linkRecoveryEnabled ? await OpenTestConnectionAsync(addressUri) : await AmqpConnection.Factory.OpenConnectionAsync(addressUri);
+            AmqpConnection connection;
+            if (linkRecoveryEnabled) 
+            {
+                connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
+            }
+            else 
+            {
+                connection = await AmqpConnection.Factory.OpenConnectionAsync(addressUri);
+            }
+
             try
             {
                 AmqpSession recoverableSession1 = await connection.OpenSessionAsync(new AmqpSessionSettings());
@@ -1016,7 +1025,7 @@ namespace Test.Microsoft.Amqp.TestCases
             bool shouldAbortDelivery = false,
             bool testSettleOnSend = false) where T : AmqpLink
         {
-            TestAmqpConnection connection = await OpenTestConnectionAsync(addressUri);
+            TestAmqpConnection connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
             try
             {
                 TestAmqpConnection brokerConnection = broker.FindConnection(connection.Settings.ContainerId) as TestAmqpConnection;
@@ -1127,11 +1136,11 @@ namespace Test.Microsoft.Amqp.TestCases
             }
         }
 
-        static async Task<TestAmqpConnection> OpenTestConnectionAsync(Uri addressUri)
+        static async Task<TestAmqpConnection> OpenTestConnectionAsync(Uri addressUri, IRuntimeProvider runtimeProvider)
         {
             AmqpConnectionFactory factory = new AmqpConnectionFactory();
             AmqpSettings settings = factory.GetAmqpSettings(null);
-            settings.RuntimeProvider = new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.NEVER });
+            settings.RuntimeProvider = runtimeProvider;
             TransportBase transport = await factory.GetTransportAsync(addressUri, settings, AmqpConstants.DefaultTimeout, CancellationToken.None);
             var connection = new TestAmqpConnection(transport, settings, new AmqpConnectionSettings() { ContainerId = Guid.NewGuid().ToString(), HostName = addressUri.Host });
             await connection.OpenAsync();
@@ -1177,7 +1186,7 @@ namespace Test.Microsoft.Amqp.TestCases
             {
                 linkSettings.LinkName = linkName;
                 linkSettings.Role = false;
-                linkSettings.Source = new Source() { ExpiryPolicy = session.LinkFactory.LinkTerminusManager.ExpirationPolicySymbol };
+                linkSettings.Source = new Source() { ExpiryPolicy = session.Connection.LinkTerminusManager.ExpirationPolicySymbol };
                 linkSettings.Target = new Target() { Address = linkName };
             }
             else if (linkType == typeof(ReceivingAmqpLink))
@@ -1187,7 +1196,7 @@ namespace Test.Microsoft.Amqp.TestCases
                 linkSettings.Source = new Source() { Address = linkName };
                 linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
                 linkSettings.AutoSendFlow = true;
-                linkSettings.Target = new Target() { ExpiryPolicy = session.LinkFactory.LinkTerminusManager.ExpirationPolicySymbol };
+                linkSettings.Target = new Target() { ExpiryPolicy = session.Connection.LinkTerminusManager.ExpirationPolicySymbol };
             }
             else
             {
