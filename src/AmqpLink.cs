@@ -692,15 +692,6 @@ namespace Microsoft.Azure.Amqp
         /// <remarks>All inflight deliveries are canceled.</remarks>
         protected override bool CloseInternal()
         {
-            if (AmqpLinkTerminusManager.IsRecoverableLink(this.settings, false))
-            {
-                lock (this.syncRoot)
-                {
-                    // get a copy of the unsettled deliveries upon link close, so the unsettled deliveries may be resumed later on a new recovered link. 
-                    this.Terminus = new AmqpLinkTerminus(this.Settings, new Dictionary<ArraySegment<byte>, Delivery>(this.unsettledMap, this.unsettledMap.Comparer));
-                }
-            }
-
             AmqpObjectState state = this.State;
             if (state == AmqpObjectState.OpenReceived ||
                 state == AmqpObjectState.ClosePipe)

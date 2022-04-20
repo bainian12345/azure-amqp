@@ -32,7 +32,7 @@ namespace Microsoft.Azure.Amqp.Framing
         public string LinkName { get; set; }
 
         /// <summary>
-        /// Gets or sets the "role" field.
+        /// Gets or sets the "role" field. True if it's a receiver.
         /// </summary>
         public bool? Role { get; set; }
 

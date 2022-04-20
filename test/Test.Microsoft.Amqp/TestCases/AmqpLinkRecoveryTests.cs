@@ -1049,6 +1049,10 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpMessage receiverSideUnsettledMessage = typeof(T) == typeof(SendingAmqpLink) ? remoteUnsettledMessage : localUnsettledMessage;
 
                 var localLink = await OpenTestLinkAsync<T>(session, $"{testName}1", unsettledMap);
+
+                Assert.NotNull(receiverSideConnection.ReceivedPerformatives);
+                Assert.NotNull(receiverSideConnection.ReceivedPerformatives.Last);
+
                 Transfer expectedTransfer = receiverSideConnection.ReceivedPerformatives.Last.Value as Transfer;
                 bool transferSettled = expectedTransfer?.Settled == true;
                 bool shouldSetResumeFlag = typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState;
@@ -1205,17 +1209,8 @@ namespace Test.Microsoft.Amqp.TestCases
 
             linkSettings.SettleType = settleMode;
             var terminus = new AmqpLinkTerminus(linkSettings, unsettledMap);
-            AmqpLink mockExistingLink;
-            if (typeof(T) == typeof(SendingAmqpLink))
-            {
-                mockExistingLink = new SendingAmqpLink(linkSettings) { Terminus = terminus };
-            }
-            else
-            {
-                mockExistingLink = new ReceivingAmqpLink(linkSettings) { Terminus = terminus };
-            }
 
-            AmqpLink link = await session.RecoverLinkAsync<T>(mockExistingLink.Terminus);
+            AmqpLink link = await session.RecoverLinkAsync<T>(terminus);
             await Task.Delay(1000); // wait for the sender to potentially send the initial deliveries
             return link;
         }

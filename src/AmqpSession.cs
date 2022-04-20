@@ -161,6 +161,11 @@ namespace Microsoft.Azure.Amqp
                 throw new NotSupportedException(linkType.Name);
             }
 
+            if (this.Connection.LinkRecoveryEnabled)
+            {
+                link.Terminus = new AmqpLinkTerminus(linkSettings, link.UnsettledMap);
+            }
+
             return this.AttachAndOpenLinkAsync<T>(link);
         }
 
@@ -247,7 +252,7 @@ namespace Microsoft.Azure.Amqp
                     throw new AmqpException(AmqpErrorCode.ResourceLocked, AmqpResources.GetString(AmqpResources.AmqpLinkNameInUse, link.Name, this.LocalChannel));
                 }
 
-                if (this.Connection.LinkRecoveryEnabled && !this.Connection.LinkTerminusManager.TryAdd(link.Settings, link))
+                if (this.Connection.LinkRecoveryEnabled && !this.Connection.LinkTerminusManager.TryRegisterLinkTerminus(link.Settings, link))
                 {
                     throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpRecoverableLinkNameInUse, link.Name, this.connection.Settings.ContainerId));
                 }
@@ -509,7 +514,6 @@ namespace Microsoft.Azure.Amqp
             {
                 link.AttachTo(this);
                 await link.OpenAsync().ConfigureAwait(false);
-                link.Terminus = null;
                 return link as T;
             }
             catch

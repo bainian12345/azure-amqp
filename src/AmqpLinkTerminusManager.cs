@@ -113,19 +113,28 @@ namespace Microsoft.Azure.Amqp
         /// Also try to remove it from the expiring link termini map, since adding it means it is active again, so it should no long expire.
         /// Return true if the key/value was added successfully, or false otherwise.
         /// </summary>
-        internal bool TryAdd(AmqpLinkSettings key, AmqpLink value)
+        internal bool TryRegisterLinkTerminus(AmqpLinkSettings key, AmqpLink value)
         {
             Fx.Assert(key != null && value != null, "Should not be adding a null link terminus.");
             lock (this.linkTerminiLock)
             {
-                if (!this.recoverableLinkTermini.ContainsKey(key))
+                if (this.recoverableLinkTermini.TryGetValue(key, out AmqpLink existingLink))
                 {
-                    this.recoverableLinkTermini.Add(key, value);
-                    this.expiringLinkTermini.Remove(key);
-                    return true;
+                    if (existingLink.State == AmqpObjectState.End || existingLink.State == AmqpObjectState.Faulted)
+                    {
+                        // The record of the closed link should be replaced with this new record instead.
+                        this.recoverableLinkTermini.Remove(key);
+                    }
+                    else
+                    {
+                        // The existing link is still active, we should not override it.
+                        return false;
+                    }
                 }
 
-                return false;
+                this.recoverableLinkTermini.Add(key, value);
+                this.expiringLinkTermini.Remove(key);
+                return true;
             }
         }
 
