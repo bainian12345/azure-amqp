@@ -161,11 +161,6 @@ namespace Microsoft.Azure.Amqp
                 throw new NotSupportedException(linkType.Name);
             }
 
-            if (this.Connection.LinkRecoveryEnabled)
-            {
-                link.Terminus = new AmqpLinkTerminus(linkSettings, link.UnsettledMap);
-            }
-
             return this.AttachAndOpenLinkAsync<T>(link);
         }
 
@@ -252,9 +247,13 @@ namespace Microsoft.Azure.Amqp
                     throw new AmqpException(AmqpErrorCode.ResourceLocked, AmqpResources.GetString(AmqpResources.AmqpLinkNameInUse, link.Name, this.LocalChannel));
                 }
 
-                if (this.Connection.LinkRecoveryEnabled && !this.Connection.LinkTerminusManager.TryRegisterLinkTerminus(link.Settings, link))
+                if (this.Connection.LinkRecoveryEnabled)
                 {
-                    throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpRecoverableLinkNameInUse, link.Name, this.connection.Settings.ContainerId));
+                    link.Terminus = link.Terminus ?? new AmqpLinkTerminus(link.Settings, link.UnsettledMap);
+                    if (!this.Connection.LinkTerminusManager.TryRegisterLinkTerminus(link.Terminus, link))
+                    {
+                        throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpRecoverableLinkNameInUse, link.Name, this.connection.Settings.ContainerId));
+                    }
                 }
 
                 link.Closed += onLinkClosed;
@@ -661,7 +660,7 @@ namespace Microsoft.Azure.Amqp
                         // This is a recoverable link.
                         // There may be another link with the same name and role under a different session but same connection.
                         // We need to close the other link and open this one because this is a link stealing scenario.
-                        if (this.linkFactory.LinkTerminusManager.TryRemove(linkSettings, out AmqpLink otherLink))
+                        if (this.linkFactory.LinkTerminusManager.TryRemove(new AmqpLinkTerminus(linkSettings, null), out AmqpLink otherLink))
                         {
                             otherLink.SafeClose(new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, otherLink.Name, otherLink.Session.connection.Settings.ContainerId)));
                         }
