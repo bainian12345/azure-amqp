@@ -35,6 +35,7 @@ namespace Microsoft.Azure.Amqp
         uint bufferedCredit;
         bool sessionWindowClosed;
         int references; // make sure no frames are sent after close
+        bool attachSentOrReceived; // make sure to only send Detach on close if we already sent or receive an Attach frame.
 
         /// <summary>
         /// Initializes the link object.
@@ -719,7 +720,11 @@ namespace Microsoft.Azure.Amqp
             }
 
             this.Session.Flush();
-            state = this.SendDetach();
+            if (this.attachSentOrReceived)
+            {
+                state = this.SendDetach();
+            }
+
             return state == AmqpObjectState.End;
         }
 
@@ -1009,11 +1014,13 @@ namespace Microsoft.Azure.Amqp
         {
             StateTransition transition = this.TransitState("S:ATTACH", StateTransition.SendOpen);
             this.Session.SendCommand(attach);
+            this.attachSentOrReceived = true;
             return transition.To;
         }
 
         AmqpObjectState SendDetach()
         {
+            Fx.Assert(this.LocalHandle != null, "The local handle should not be null when sending detach to remote, because it would mean that the link was not attached in the first place.");
             StateTransition transition = this.TransitState("S:DETACH", StateTransition.SendClose);
 
             Detach detach = new Detach();
@@ -1035,6 +1042,7 @@ namespace Microsoft.Azure.Amqp
 
         void OnReceiveAttach(Attach attach)
         {
+            this.attachSentOrReceived = true;
             StateTransition stateTransition = this.TransitState("R:ATTACH", StateTransition.ReceiveOpen);
 
             Error error = this.Negotiate(attach);
