@@ -210,7 +210,23 @@ namespace Microsoft.Azure.Amqp
 
         internal AmqpLinkTerminus Terminus { get; set; }
 
-        internal AmqpSymbol TerminusExpiryPolicy => this.IsReceiver ? ((Target)this.Settings.Target).ExpiryPolicy : ((Source)this.Settings.Source).ExpiryPolicy;
+        internal AmqpSymbol TerminusExpiryPolicy
+        {
+            get
+            {
+                if (this.IsReceiver && this.Settings.Target is Target target)
+                {
+                    return target.ExpiryPolicy;
+                }
+                else if (!this.IsReceiver && this.Settings.Source is Source source)
+                {
+                    return source.ExpiryPolicy;
+                }
+
+                // this could be a coordinator link, which should not have any expiration policy applied.
+                return new AmqpSymbol();
+            }
+        }
 
         /// <summary>
         /// Attaches the link to a session.

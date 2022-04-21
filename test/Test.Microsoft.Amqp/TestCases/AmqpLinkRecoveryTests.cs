@@ -232,6 +232,18 @@ namespace Test.Microsoft.Amqp.TestCases
             await LinkTerminusUniquenessTestAsync<ReceivingAmqpLink, ReceivingAmqpLink>(linkRecoveryEnabled: true, openNewLink: false, shouldClose: false, shouldAbort: true);
         }
 
+        [Fact]
+        public async Task LinkExpiryPolicyNoTimeoutTests()
+        {
+            await LinkExpiraryPolicyTest(nameof(LinkExpiryPolicyNoTimeoutTests), TimeSpan.Zero);
+        }
+
+        [Fact]
+        public async Task LinkExpiryPolicyWithTimeoutTests()
+        {
+            await LinkExpiraryPolicyTest(nameof(LinkExpiryPolicyWithTimeoutTests), TimeSpan.FromSeconds(2));
+        }
+
         // Oasis AMQP doc section 3.4.6, example delivery tag 1.
         // Local sender has DeliveryState = null, remote receiver does not have this unsettled delivery.
         // Expected behavior is that the sender will immediately resend this delivery with field resume=false if settle mode is not settle-on-send.
@@ -1002,6 +1014,90 @@ namespace Test.Microsoft.Amqp.TestCases
         }
 
         /// <summary>
+        /// Test that the link terminus actually expire upon the given expiry policy and timeout duration.
+        /// </summary>
+        async Task LinkExpiraryPolicyTest(string testName, TimeSpan expiryTimeout)
+        {
+            var testPolicies = new LinkTerminusExpirationPolicy[]
+            {
+                LinkTerminusExpirationPolicy.NONE,
+                LinkTerminusExpirationPolicy.LINK_DETACH,
+                LinkTerminusExpirationPolicy.SESSION_END,
+                LinkTerminusExpirationPolicy.CONNECTION_CLOSE,
+                LinkTerminusExpirationPolicy.NEVER
+            };
+
+            AmqpLinkTerminusManager prevBrokerLinkTerminusManager = broker.LinkTerminusManager;
+            try
+            {
+                foreach (LinkTerminusExpirationPolicy expirationPolicy in testPolicies)
+                {
+                    AmqpConnection connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy, ExpiryTimeout = expiryTimeout }));
+                    broker.LinkTerminusManager = new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy, ExpiryTimeout = expiryTimeout };
+                    AmqpConnection brokerConnection = broker.FindConnection(connection.Settings.ContainerId);
+
+                    AmqpSession session = await connection.OpenSessionAsync();
+                    SendingAmqpLink sendLink = await session.OpenLinkAsync<SendingAmqpLink>(testName + "-sender", addressUri.AbsoluteUri);
+                    ReceivingAmqpLink receiveLink = await session.OpenLinkAsync<ReceivingAmqpLink>(testName + "-receiver", addressUri.AbsoluteUri);
+
+                    AmqpLinkTerminusManager terminusManager = connection.LinkTerminusManager;
+                    AmqpLinkTerminusManager brokerTerminusManager = brokerConnection.LinkTerminusManager;
+
+                    await sendLink.CloseAsync();
+                    await receiveLink.CloseAsync();
+                    if (expiryTimeout > TimeSpan.Zero)
+                    {
+                        AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.LINK_DETACH, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                        await Task.Delay(expiryTimeout + TimeSpan.FromMilliseconds(500));
+                    }
+
+                    AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.LINK_DETACH, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+
+                    await session.CloseAsync();
+                    if (expiryTimeout > TimeSpan.Zero)
+                    {
+                        AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.SESSION_END, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                        await Task.Delay(expiryTimeout + TimeSpan.FromMilliseconds(500));
+                    }
+
+                    AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.SESSION_END, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+
+                    await connection.CloseAsync();
+                    if (expiryTimeout > TimeSpan.Zero)
+                    {
+                        AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.CONNECTION_CLOSE, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                        await Task.Delay(expiryTimeout + TimeSpan.FromMilliseconds(500));
+                    }
+
+                    AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.CONNECTION_CLOSE, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                }
+            }
+            finally
+            {
+                broker.LinkTerminusManager = prevBrokerLinkTerminusManager;
+            }
+        }
+
+        void AssertLinkTermini(bool shouldExist, AmqpLinkTerminusManager localTerminusManager, AmqpLinkTerminusManager remoteLocalTerminusManager, AmqpLinkTerminus localSendLinkTerminus, AmqpLinkTerminus localReceiveTerminus)
+        {
+            if (localSendLinkTerminus == null || localReceiveTerminus == null)
+            {
+                // the link terminus may be null if link recovery is not enabled.
+                Assert.False(shouldExist);
+                return;
+            }
+
+            // The link terminus from the broker side should have the same link names but opposite sender/receiver roles.
+            AmqpLinkTerminus brokerSenderTerminus = new AmqpLinkTerminus(new AmqpLinkSettings() { LinkName = localSendLinkTerminus.Settings.LinkName, Role = !localSendLinkTerminus.Settings.Role }, null);
+            AmqpLinkTerminus brokerReceiverTerminus = new AmqpLinkTerminus(new AmqpLinkSettings() { LinkName = localReceiveTerminus.Settings.LinkName, Role = !localReceiveTerminus.Settings.Role }, null);
+
+            Assert.True(localTerminusManager.TryGetValue(localSendLinkTerminus, out _) == shouldExist, $"local sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
+            Assert.True(localTerminusManager.TryGetValue(localReceiveTerminus, out _) == shouldExist, $"local receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
+            Assert.True(remoteLocalTerminusManager.TryGetValue(brokerSenderTerminus, out _) == shouldExist, $"remote sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteLocalTerminusManager.ExpirationPolicy}");
+            Assert.True(remoteLocalTerminusManager.TryGetValue(brokerReceiverTerminus, out _) == shouldExist, $"remote receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteLocalTerminusManager.ExpirationPolicy}");
+        }
+
+        /// <summary>
         /// Test the negotiation of a single unsettled delivery between local and the remote peer.
         /// Please see the OASIS AMQP doc section 3.4.6 for the test scenarios.
         /// </summary>
@@ -1049,10 +1145,6 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpMessage receiverSideUnsettledMessage = typeof(T) == typeof(SendingAmqpLink) ? remoteUnsettledMessage : localUnsettledMessage;
 
                 var localLink = await OpenTestLinkAsync<T>(session, $"{testName}1", unsettledMap);
-
-                Assert.NotNull(receiverSideConnection.ReceivedPerformatives);
-                Assert.NotNull(receiverSideConnection.ReceivedPerformatives.Last);
-
                 Transfer expectedTransfer = receiverSideConnection.ReceivedPerformatives.Last.Value as Transfer;
                 bool transferSettled = expectedTransfer?.Settled == true;
                 bool shouldSetResumeFlag = typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState;
@@ -1136,7 +1228,7 @@ namespace Test.Microsoft.Amqp.TestCases
             }
             finally
             {
-                connection?.Close();
+                connection.Close();
             }
         }
 

@@ -163,19 +163,7 @@ namespace Microsoft.Azure.Amqp
         /// <summary>
         /// Upon creation of a new link, decide if could have recoverable link terminus and have the corresponding settings by checking if there is a valid <see cref="AmqpLinkTerminusManager"/>.
         /// </summary>
-        internal bool LinkRecoveryEnabled => this.LinkTerminusManager != null;
-
-        ///// <summary>
-        ///// The link termini used by link recovery. The combination of link name+role must be unique under the connection scope to enable link recovery.
-        ///// Should only be initialized if link recovery is enabled on the connection settings.
-        ///// </summary>
-        //internal ConcurrentDictionary<AmqpLinkSettings, AmqpLink> RecoverableLinkEndpoints
-        //{
-        //    get
-        //    {
-        //        return this.recoverableLinkEndpoints;
-        //    }
-        //}
+        internal bool LinkRecoveryEnabled => this.LinkTerminusManager != null && this.LinkTerminusManager.ExpirationPolicy > LinkTerminusExpirationPolicy.NONE;
 
         /// <summary>
         /// Creates a <see cref="AmqpSession"/> and adds it to the session collection.
@@ -288,6 +276,10 @@ namespace Microsoft.Azure.Amqp
             AmqpTrace.Provider.AmqpCloseConnection(this, this, false);
             this.heartBeat.Stop();
             this.CloseSessions(!this.SessionFrameAllowed());
+            if (this.LinkRecoveryEnabled && this.LinkTerminusManager.ExpirationPolicy == LinkTerminusExpirationPolicy.CONNECTION_CLOSE)
+            {
+                this.LinkTerminusManager.ExpireConnection(this);
+            }
 
             if (this.State == AmqpObjectState.OpenReceived)
             {
@@ -324,6 +316,10 @@ namespace Microsoft.Azure.Amqp
             this.heartBeat.Stop();
             this.CloseSessions(true);
             this.AsyncIO.Abort();
+            if (this.LinkRecoveryEnabled && this.LinkTerminusManager.ExpirationPolicy == LinkTerminusExpirationPolicy.CONNECTION_CLOSE)
+            {
+                this.LinkTerminusManager.ExpireConnection(this);
+            }
         }
 
         /// <summary>
