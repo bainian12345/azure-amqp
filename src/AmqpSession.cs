@@ -135,7 +135,7 @@ namespace Microsoft.Azure.Amqp
                 if (this.Connection.LinkRecoveryEnabled)
                 {
                     Source source = linkSettings.Source as Source;
-                    source.ExpiryPolicy = this.linkFactory.LinkTerminusManager.ExpirationPolicySymbol;
+                    source.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
                 }
 
                 link = new SendingAmqpLink(linkSettings);
@@ -151,7 +151,7 @@ namespace Microsoft.Azure.Amqp
                 if (this.Connection.LinkRecoveryEnabled)
                 {
                     Target target = linkSettings.Target as Target;
-                    target.ExpiryPolicy = this.linkFactory.LinkTerminusManager.ExpirationPolicySymbol;
+                    target.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
                 }
 
                 link = new ReceivingAmqpLink(linkSettings);

@@ -19,8 +19,8 @@ namespace Microsoft.Azure.Amqp
         static readonly TimeSpan DefaultExpiryTimeout = TimeSpan.Zero;
 
         object linkTerminiLock;
-        Dictionary<AmqpLinkTerminus, AmqpLink> recoverableLinkTermini;
-        Dictionary<AmqpLinkTerminus, AmqpLink> expiringLinkTermini;
+        Dictionary<AmqpLinkTerminus, AmqpLink> linkTermini;
+        Dictionary<AmqpLinkTerminus, AmqpLink> suspendedLinkTermini;
 
         /// <summary>
         /// Create a new instance of <see cref="AmqpLinkTerminusManager"/>.
@@ -28,37 +28,37 @@ namespace Microsoft.Azure.Amqp
         public AmqpLinkTerminusManager()
         {
             this.linkTerminiLock = new object();
-            this.recoverableLinkTermini = new Dictionary<AmqpLinkTerminus, AmqpLink>();
-            this.expiringLinkTermini = new Dictionary<AmqpLinkTerminus, AmqpLink>();
+            this.linkTermini = new Dictionary<AmqpLinkTerminus, AmqpLink>();
+            this.suspendedLinkTermini = new Dictionary<AmqpLinkTerminus, AmqpLink>();
         }
 
         /// <summary>
-        /// The expiration policy which will be applied to all the created links tracked by this class.
+        /// The default expiration policy which will be applied to all the created links tracked by this class.
         /// </summary>
-        public LinkTerminusExpirationPolicy ExpirationPolicy { get; set; }
+        public LinkTerminusExpirationPolicy ExpirationPolicy { get; set; } = LinkTerminusExpirationPolicy.NONE;
 
         /// <summary>
-        /// The duration that the link endpoint should be kept for after the expiration countdown begins.
+        /// The default duration that the link endpoint should be kept for after the expiration countdown begins.
         /// </summary>
         public TimeSpan ExpiryTimeout { get; set; } = DefaultExpiryTimeout;
 
-        internal AmqpSymbol ExpirationPolicySymbol
+        /// <summary>
+        /// Returns the corresponding <see cref="AmqpSymbol"/> for the given link terminus expiration policy.
+        /// </summary>
+        public static AmqpSymbol GetExpirationPolicySymbol(LinkTerminusExpirationPolicy linkTerminusExpirationPolicy)
         {
-            get
+            switch (linkTerminusExpirationPolicy)
             {
-                switch (this.ExpirationPolicy)
-                {
-                    case LinkTerminusExpirationPolicy.LINK_DETACH:
-                        return AmqpConstants.TerminusExpirationPolicy.LinkDetach;
-                    case LinkTerminusExpirationPolicy.SESSION_END:
-                        return AmqpConstants.TerminusExpirationPolicy.SessionEnd;
-                    case LinkTerminusExpirationPolicy.CONNECTION_CLOSE:
-                        return AmqpConstants.TerminusExpirationPolicy.ConnectionClose;
-                    case LinkTerminusExpirationPolicy.NEVER:
-                        return AmqpConstants.TerminusExpirationPolicy.Never;
-                    default:
-                        return new AmqpSymbol(null);
-                }
+                case LinkTerminusExpirationPolicy.LINK_DETACH:
+                    return AmqpConstants.TerminusExpirationPolicy.LinkDetach;
+                case LinkTerminusExpirationPolicy.SESSION_END:
+                    return AmqpConstants.TerminusExpirationPolicy.SessionEnd;
+                case LinkTerminusExpirationPolicy.CONNECTION_CLOSE:
+                    return AmqpConstants.TerminusExpirationPolicy.ConnectionClose;
+                case LinkTerminusExpirationPolicy.NEVER:
+                    return AmqpConstants.TerminusExpirationPolicy.Never;
+                default:
+                    return new AmqpSymbol(null);
             }
         }
 
@@ -104,7 +104,7 @@ namespace Microsoft.Azure.Amqp
         {
             lock (this.linkTerminiLock)
             {
-                return this.recoverableLinkTermini.TryGetValue(key, out value);
+                return this.linkTermini.TryGetValue(key, out value);
             }
         }
 
@@ -118,12 +118,12 @@ namespace Microsoft.Azure.Amqp
             Fx.Assert(key != null && value != null, "Should not be adding a null link terminus.");
             lock (this.linkTerminiLock)
             {
-                if (this.recoverableLinkTermini.TryGetValue(key, out AmqpLink existingLink))
+                if (this.linkTermini.TryGetValue(key, out AmqpLink existingLink))
                 {
                     if (existingLink.State == AmqpObjectState.End || existingLink.State == AmqpObjectState.Faulted)
                     {
                         // The record of the closed link should be replaced with this new record instead.
-                        this.recoverableLinkTermini.Remove(key);
+                        this.linkTermini.Remove(key);
                     }
                     else
                     {
@@ -132,8 +132,8 @@ namespace Microsoft.Azure.Amqp
                     }
                 }
 
-                this.recoverableLinkTermini.Add(key, value);
-                this.expiringLinkTermini.Remove(key);
+                this.linkTermini.Add(key, value);
+                this.suspendedLinkTermini.Remove(key);
                 return true;
             }
         }
@@ -146,9 +146,9 @@ namespace Microsoft.Azure.Amqp
             Fx.Assert(key != null, "Should not be removing a null link terminus.");
             lock (this.linkTerminiLock)
             {
-                if (this.recoverableLinkTermini.TryGetValue(key, out value))
+                if (this.linkTermini.TryGetValue(key, out value))
                 {
-                    this.recoverableLinkTermini.Remove(key);
+                    this.linkTermini.Remove(key);
                     return true;
                 }
 
@@ -165,14 +165,14 @@ namespace Microsoft.Azure.Amqp
 
             lock (this.linkTerminiLock)
             {
-                foreach (KeyValuePair<AmqpLinkTerminus, AmqpLink> entry in this.recoverableLinkTermini)
+                foreach (KeyValuePair<AmqpLinkTerminus, AmqpLink> entry in this.linkTermini)
                 {
                     if (entry.Value.Session.Connection == connection && entry.Value.TerminusExpiryPolicy.Equals(AmqpConstants.TerminusExpirationPolicy.ConnectionClose))
                     {
                         linkTerminiToExpire.Add(entry.Key);
-                        if (!this.expiringLinkTermini.ContainsKey(entry.Key))
+                        if (!this.suspendedLinkTermini.ContainsKey(entry.Key))
                         {
-                            this.expiringLinkTermini.Add(entry.Key, entry.Value);
+                            this.suspendedLinkTermini.Add(entry.Key, entry.Value);
                         }
                     }
                 }
@@ -190,14 +190,14 @@ namespace Microsoft.Azure.Amqp
 
             lock (this.linkTerminiLock)
             {
-                foreach (KeyValuePair<AmqpLinkTerminus, AmqpLink> entry in this.recoverableLinkTermini)
+                foreach (KeyValuePair<AmqpLinkTerminus, AmqpLink> entry in this.linkTermini)
                 {
                     if (entry.Value.Session == session && entry.Value.TerminusExpiryPolicy.Equals(AmqpConstants.TerminusExpirationPolicy.SessionEnd))
                     {
                         linkTerminiToExpire.Add(entry.Key);
-                        if (!this.expiringLinkTermini.ContainsKey(entry.Key))
+                        if (!this.suspendedLinkTermini.ContainsKey(entry.Key))
                         {
-                            this.expiringLinkTermini.Add(entry.Key, entry.Value);
+                            this.suspendedLinkTermini.Add(entry.Key, entry.Value);
                         }
                     }
                 }
@@ -214,9 +214,9 @@ namespace Microsoft.Azure.Amqp
             //Fx.Assert(link.Terminus != null, "Cannot expire a null link terminus");
             lock (this.linkTerminiLock)
             {
-                if (!this.expiringLinkTermini.ContainsKey(link.Terminus))
+                if (!this.suspendedLinkTermini.ContainsKey(link.Terminus))
                 {
-                    this.expiringLinkTermini.Add(link.Terminus, link);
+                    this.suspendedLinkTermini.Add(link.Terminus, link);
                 }
             }
 
@@ -251,11 +251,11 @@ namespace Microsoft.Azure.Amqp
                 {
                     foreach (AmqpLinkTerminus linkTerminusToExpire in linkTerminiToExpire)
                     {
-                        if (this.expiringLinkTermini.ContainsKey(linkTerminusToExpire))
+                        if (this.suspendedLinkTermini.ContainsKey(linkTerminusToExpire))
                         {
                             // this link terminus is still marked for expiration, so we can remove it safely here.
-                            this.recoverableLinkTermini.Remove(linkTerminusToExpire);
-                            this.expiringLinkTermini.Remove(linkTerminusToExpire);
+                            this.linkTermini.Remove(linkTerminusToExpire);
+                            this.suspendedLinkTermini.Remove(linkTerminusToExpire);
                         }
                     }
                 }
