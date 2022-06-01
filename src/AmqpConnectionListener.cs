@@ -161,8 +161,6 @@ namespace Microsoft.Azure.Amqp
             {
                 this.connections.Remove(connection);
             }
-
-            connection.AmqpSettings.RuntimeProvider?.LinkTerminusManager?.ExpireConnection(connection);
         }
 
         void OnAcceptTransport(TransportListener innerListener, TransportAsyncCallbackArgs args)

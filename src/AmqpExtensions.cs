@@ -446,6 +446,27 @@ namespace Microsoft.Azure.Amqp
             return deliveryState?.Outcome() != null;
         }
 
+        /// <summary>
+        /// Return the ExpiryPolicy from the link settings by checking the Target or Source, depending if the link is a receiver or sender.
+        /// </summary>
+        /// <param name="linkSettings">The link settings to obtain the ExpiryPolicy from.</param>
+        public static AmqpSymbol ExpiryPolicy(this AmqpLinkSettings linkSettings)
+        {
+            if (linkSettings != null)
+            {
+                if (linkSettings.IsReceiver() && linkSettings.Target is Target target)
+                {
+                    return target.ExpiryPolicy;
+                }
+                else if (!linkSettings.IsReceiver() && linkSettings.Source is Source source)
+                {
+                    return source.ExpiryPolicy;
+                }
+            }
+
+            return new AmqpSymbol();
+        }
+
         // settings
         /// <summary>
         /// Updates or inserts a value in begin.properties.

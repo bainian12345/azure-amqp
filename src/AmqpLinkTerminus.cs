@@ -26,6 +26,11 @@
         }
 
         /// <summary>
+        /// This event will be fired when the terminus is expired from the ExpiryPolicy.
+        /// </summary>
+        public event EventHandler Expired;
+
+        /// <summary>
         /// Returns the <see cref="AmqpLinkSettings"/> that is associated with this link terminus object.
         /// Please note that this link settings object is used to uniquely identify this link terminus.
         /// </summary>
@@ -53,6 +58,11 @@
         public override int GetHashCode()
         {
             return this.Settings.GetHashCode();
+        }
+
+        internal void OnExpired()
+        {
+            this.Expired?.Invoke(this, EventArgs.Empty);
         }
     }
 }

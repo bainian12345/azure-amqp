@@ -90,6 +90,11 @@ namespace Microsoft.Azure.Amqp
         public event EventHandler PropertyReceived;
 
         /// <summary>
+        /// A handler that's fired when this link is closing due to link stealing.
+        /// </summary>
+        public event EventHandler LinkStolen;
+
+        /// <summary>
         /// Gets the link name.
         /// </summary>
         public string Name
@@ -969,6 +974,12 @@ namespace Microsoft.Azure.Amqp
 
             delivery.Link = this;
             this.inflightDeliveries.DoWork(delivery);
+        }
+
+        internal void OnLinkStolen()
+        {
+            this.LinkStolen?.Invoke(this, EventArgs.Empty);
+            this.SafeClose(new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, this.Name, this.Session.Connection.Settings.ContainerId)));
         }
 
         void DisposeDeliveryInternal(Delivery delivery, bool settled, DeliveryState state, bool noFlush)

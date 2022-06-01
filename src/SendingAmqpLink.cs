@@ -245,7 +245,7 @@ namespace Microsoft.Azure.Amqp
         protected override bool OpenInternal()
         {
             bool syncComplete = base.OpenInternal();
-            if (AmqpLinkTerminusManager.IsRecoverableLink(this.Settings, false) && this.State == AmqpObjectState.Opened)
+            if (AmqpLinkTerminusManager.IsRecoverableLink(this.Settings) && this.State == AmqpObjectState.Opened)
             {
                 this.ResendUnsettledDeliveriesUponOpen();
             }

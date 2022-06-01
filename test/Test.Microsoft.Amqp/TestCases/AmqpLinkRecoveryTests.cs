@@ -985,6 +985,9 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpSession recoverableSession2 = await connection.OpenSessionAsync(new AmqpSessionSettings());
                 T1 link1 = await recoverableSession1.OpenLinkAsync<T1>(linkName, addressUri.AbsoluteUri);
 
+                bool linkStolenTriggered = false;
+                link1.LinkStolen += (sender, e) => linkStolenTriggered = true;
+
                 if (shouldClose)
                 {
                     await link1.CloseAsync();
@@ -996,16 +999,17 @@ namespace Test.Microsoft.Amqp.TestCases
 
                 // prepare the link terminus object used for link recovery. The link terminus object is only created if the link closes gracefully and link recovery is enabled.
                 AmqpLinkTerminus linkTerminus = shouldClose ? link1.Terminus : new AmqpLinkTerminus(link1.Settings, link1.UnsettledMap);
-                bool shouldThrow = linkRecoveryEnabled && !shouldClose && !shouldAbort && typeof(T1) == typeof(T2);
-                Task openLink2Task = openNewLink ? recoverableSession2.OpenLinkAsync<T2>(linkName, addressUri.AbsoluteUri) : recoverableSession2.RecoverLinkAsync<T2>(linkTerminus);
-                if (shouldThrow)
+                bool shouldLink1BeStolen = linkRecoveryEnabled && !shouldClose && !shouldAbort && typeof(T1) == typeof(T2);
+                if (openNewLink)
                 {
-                    await Assert.ThrowsAsync<InvalidOperationException>(() => openLink2Task);
+                    await recoverableSession2.OpenLinkAsync<T2>(linkName, addressUri.AbsoluteUri);
                 }
                 else
                 {
-                    await openLink2Task;
+                    await recoverableSession2.RecoverLinkAsync<T2>(linkTerminus);
                 }
+
+                Assert.Equal(shouldLink1BeStolen, linkStolenTriggered);
             }
             finally
             {
@@ -1032,8 +1036,8 @@ namespace Test.Microsoft.Amqp.TestCases
             {
                 foreach (LinkTerminusExpirationPolicy expirationPolicy in testPolicies)
                 {
-                    AmqpConnection connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy, MaxExpiryTimeout = expiryTimeout }));
-                    broker.LinkTerminusManager = new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy, MaxExpiryTimeout = expiryTimeout };
+                    AmqpConnection connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy }));
+                    broker.LinkTerminusManager = new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy };
                     AmqpConnection brokerConnection = broker.FindConnection(connection.Settings.ContainerId);
 
                     AmqpSession session = await connection.OpenSessionAsync();
@@ -1075,6 +1079,7 @@ namespace Test.Microsoft.Amqp.TestCases
             }
             finally
             {
+                // restore the LinkTerminusManager for the broker to previous state so future tests will not be affected.
                 broker.LinkTerminusManager = prevBrokerLinkTerminusManager;
             }
         }
@@ -1082,7 +1087,7 @@ namespace Test.Microsoft.Amqp.TestCases
         /// <summary>
         /// Verify that the local and remote LinkTerminusManager has or does not have records of the given link termini, according the the shouldExist flag.
         /// </summary>
-        static void AssertLinkTermini(bool shouldExist, AmqpLinkTerminusManager localTerminusManager, AmqpLinkTerminusManager remoteLocalTerminusManager, AmqpLinkTerminus localSendLinkTerminus, AmqpLinkTerminus localReceiveTerminus)
+        static void AssertLinkTermini(bool shouldExist, AmqpLinkTerminusManager localTerminusManager, AmqpLinkTerminusManager remoteTerminusManager, AmqpLinkTerminus localSendLinkTerminus, AmqpLinkTerminus localReceiveTerminus)
         {
             if (localSendLinkTerminus == null || localReceiveTerminus == null)
             {
@@ -1097,8 +1102,8 @@ namespace Test.Microsoft.Amqp.TestCases
 
             Assert.True(localTerminusManager.TryGetValue(localSendLinkTerminus, out _) == shouldExist, $"local sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
             Assert.True(localTerminusManager.TryGetValue(localReceiveTerminus, out _) == shouldExist, $"local receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
-            Assert.True(remoteLocalTerminusManager.TryGetValue(brokerSenderTerminus, out _) == shouldExist, $"remote sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteLocalTerminusManager.ExpirationPolicy}");
-            Assert.True(remoteLocalTerminusManager.TryGetValue(brokerReceiverTerminus, out _) == shouldExist, $"remote receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteLocalTerminusManager.ExpirationPolicy}");
+            Assert.True(remoteTerminusManager.TryGetValue(brokerSenderTerminus, out _) == shouldExist, $"remote sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteTerminusManager.ExpirationPolicy}");
+            Assert.True(remoteTerminusManager.TryGetValue(brokerReceiverTerminus, out _) == shouldExist, $"remote receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteTerminusManager.ExpirationPolicy}");
         }
 
         /// <summary>

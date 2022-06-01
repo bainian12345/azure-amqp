@@ -4,7 +4,6 @@
 namespace Microsoft.Azure.Amqp
 {
     using System;
-    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Linq;
     using System.Threading;
@@ -21,7 +20,7 @@ namespace Microsoft.Azure.Amqp
         readonly AmqpConnection connection;
         readonly AmqpSessionSettings settings;
         readonly ILinkFactory linkFactory;
-        Dictionary<string, AmqpLink> links;
+        Dictionary<AmqpLinkIdentifier, AmqpLink> links;
         HandleTable<AmqpLink> linksByLocalHandle;
         HandleTable<AmqpLink> linksByRemoteHandle;
         OutgoingSessionChannel outgoingChannel;
@@ -54,7 +53,7 @@ namespace Microsoft.Azure.Amqp
             this.settings = settings;
             this.linkFactory = linkFactory;
             this.State = AmqpObjectState.Start;
-            this.links = new Dictionary<string, AmqpLink>();
+            this.links = new Dictionary<AmqpLinkIdentifier, AmqpLink>();
             this.linksByLocalHandle = new HandleTable<AmqpLink>(settings.HandleMax ?? AmqpConstants.DefaultMaxLinkHandles - 1);
             this.linksByRemoteHandle = new HandleTable<AmqpLink>(settings.HandleMax ?? AmqpConstants.DefaultMaxLinkHandles - 1);
             this.outgoingChannel = new OutgoingSessionChannel(this);
@@ -242,22 +241,23 @@ namespace Microsoft.Azure.Amqp
                     throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpIllegalOperationState, "attach", this.State));
                 }
 
-                if (this.links.ContainsKey(link.Name))
+                if (this.links.ContainsKey(link.Settings.LinkIdentifier))
                 {
                     throw new AmqpException(AmqpErrorCode.ResourceLocked, AmqpResources.GetString(AmqpResources.AmqpLinkNameInUse, link.Name, this.LocalChannel));
                 }
 
                 if (this.Connection.LinkRecoveryEnabled)
                 {
-                    link.Terminus = link.Terminus ?? new AmqpLinkTerminus(link.Settings, link.UnsettledMap);
-                    if (!this.Connection.LinkTerminusManager.TryRegisterLinkTerminus(link.Terminus, link))
+                    if (link.Terminus == null)
                     {
-                        throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpRecoverableLinkNameInUse, link.Name, this.connection.Settings.ContainerId));
+                        link.Terminus = new AmqpLinkTerminus(link.Settings, link.UnsettledMap);
                     }
+
+                    this.Connection.LinkTerminusManager.RegisterLinkTerminus(link.Terminus, link);
                 }
 
                 link.Closed += onLinkClosed;
-                this.links.Add(link.Name, link);
+                this.links.Add(link.Settings.LinkIdentifier, link);
                 link.LocalHandle = this.linksByLocalHandle.Add(link);
             }
 
@@ -646,26 +646,19 @@ namespace Microsoft.Azure.Amqp
             if (command.DescriptorCode == Attach.Code)
             {
                 Attach attach = (Attach)command;
+                AmqpLinkSettings linkSettings = AmqpLinkSettings.Create(attach);
                 lock (this.ThisLock)
                 {
-                    this.links.TryGetValue(attach.LinkName, out link);
+                    this.links.TryGetValue(linkSettings.LinkIdentifier, out link);
+                }
+
+                if (this.Connection.LinkRecoveryEnabled && link != null && this.Connection.LinkTerminusManager.TryStealLink(link.Terminus, link))
+                {
+                    link = null;
                 }
 
                 if (link == null)
                 {
-                    AmqpLinkSettings linkSettings = AmqpLinkSettings.Create(attach);
-
-                    if (this.Connection.LinkRecoveryEnabled)
-                    {
-                        // This is a recoverable link.
-                        // There may be another link with the same name and role under a different session but same connection.
-                        // We need to close the other link and open this one because this is a link stealing scenario.
-                        if (this.linkFactory.LinkTerminusManager.TryRemove(new AmqpLinkTerminus(linkSettings, null), out AmqpLink otherLink))
-                        {
-                            otherLink.SafeClose(new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, otherLink.Name, otherLink.Session.connection.Settings.ContainerId)));
-                        }
-                    }
-
                     if (!this.TryCreateRemoteLink(linkSettings, out link))
                     {
                         return;
@@ -735,6 +728,28 @@ namespace Microsoft.Azure.Amqp
             }
         }
 
+        /// <summary>
+        /// Expire all link termini under this session with the matching ExpiryPolicy.
+        /// </summary>
+        /// <param name="expiryPolicy"></param>
+        internal void ExpireLinkTermini(AmqpSymbol expiryPolicy)
+        {
+            Fx.Assert(AmqpLinkTerminusManager.IsValidTerminusExpirationPolicy(expiryPolicy), "The given ExpiryPolicy is not valid");
+            IEnumerable<AmqpLink> linksSnapshot = null;
+            lock (this.ThisLock)
+            {
+                linksSnapshot = this.linksByLocalHandle.Values;
+            }
+
+            foreach (var link in linksSnapshot)
+            {
+                if (link.Terminus != null && link.Settings.ExpiryPolicy().Equals(expiryPolicy))
+                {
+                    this.Connection.LinkTerminusManager.SuspendLink(link);
+                }
+            }
+        }
+
         static void OnLinkClosed(object sender, EventArgs e)
         {
             AmqpLink link = (AmqpLink)sender;
@@ -742,7 +757,7 @@ namespace Microsoft.Azure.Amqp
             lock (thisPtr.ThisLock)
             {
                 link.Closed -= onLinkClosed;
-                thisPtr.links.Remove(link.Name);
+                thisPtr.links.Remove(link.Settings.LinkIdentifier);
                 if (link.LocalHandle.HasValue)
                 {
                     thisPtr.linksByLocalHandle.Remove(link.LocalHandle.Value);
@@ -759,7 +774,7 @@ namespace Microsoft.Azure.Amqp
 
             if (thisPtr.Connection.LinkRecoveryEnabled && (link.TerminusExpiryPolicy.Equals(AmqpConstants.TerminusExpirationPolicy.LinkDetach) || link.TerminusExpiryPolicy.Value == null))
             {
-                thisPtr.Connection.LinkTerminusManager.ExpireLink(link);
+                thisPtr.Connection.LinkTerminusManager.SuspendLink(link);
             }
 
             AmqpTrace.Provider.AmqpRemoveLink(thisPtr, link, link.LocalHandle ?? 0u, link.RemoteHandle ?? 0u, link.Name);

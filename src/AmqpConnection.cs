@@ -276,10 +276,6 @@ namespace Microsoft.Azure.Amqp
             AmqpTrace.Provider.AmqpCloseConnection(this, this, false);
             this.heartBeat.Stop();
             this.CloseSessions(!this.SessionFrameAllowed());
-            if (this.LinkRecoveryEnabled && this.LinkTerminusManager.ExpirationPolicy == LinkTerminusExpirationPolicy.CONNECTION_CLOSE)
-            {
-                this.LinkTerminusManager.ExpireConnection(this);
-            }
 
             if (this.State == AmqpObjectState.OpenReceived)
             {
@@ -316,10 +312,6 @@ namespace Microsoft.Azure.Amqp
             this.heartBeat.Stop();
             this.CloseSessions(true);
             this.AsyncIO.Abort();
-            if (this.LinkRecoveryEnabled && this.LinkTerminusManager.ExpirationPolicy == LinkTerminusExpirationPolicy.CONNECTION_CLOSE)
-            {
-                this.LinkTerminusManager.ExpireConnection(this);
-            }
         }
 
         /// <summary>
@@ -434,6 +426,8 @@ namespace Microsoft.Azure.Amqp
                 {
                     session.SafeClose();
                 }
+
+                session.ExpireLinkTermini(AmqpConstants.TerminusExpirationPolicy.ConnectionClose);
             }
         }
 
@@ -656,11 +650,7 @@ namespace Microsoft.Azure.Amqp
                     }
                 }
 
-                if (thisPtr.LinkRecoveryEnabled)
-                {
-                    thisPtr.LinkTerminusManager.ExpireSession(session);
-                }
-
+                session.ExpireLinkTermini(AmqpConstants.TerminusExpirationPolicy.SessionEnd);
                 AmqpTrace.Provider.AmqpRemoveSession(thisPtr, session, session.LocalChannel, session.RemoteChannel ?? 0);
             }
         }

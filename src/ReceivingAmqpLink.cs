@@ -504,7 +504,7 @@ namespace Microsoft.Azure.Amqp
         protected override void OnProcessTransfer(Delivery delivery, Transfer transfer, Frame frame)
         {
             bool shouldProcessMessage = !delivery.Aborted;
-            if (AmqpLinkTerminusManager.IsRecoverableLink(this.Settings, false))
+            if (AmqpLinkTerminusManager.IsRecoverableLink(this.Settings))
             {
                 Delivery existing;
                 lock (this.SyncRoot)
