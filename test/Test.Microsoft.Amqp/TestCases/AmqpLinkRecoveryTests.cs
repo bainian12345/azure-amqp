@@ -60,7 +60,7 @@ namespace Test.Microsoft.Amqp.TestCases
                     Assert.Equal(m, delivery);
                 }
 
-                SendingAmqpLink newSender = await session.RecoverLinkAsync<SendingAmqpLink>(linkTerminus);
+                SendingAmqpLink newSender = await session.RecoverLinkAsync<SendingAmqpLink>(linkTerminus, nameof(SenderRecoveryTest));
                 Assert.Equal(originalSender.Name, newSender.Name);
                 Assert.Equal(originalSender.IsReceiver, newSender.IsReceiver);
                 Assert.Equal("MyPropValue", newSender.Settings.Properties["MyProp"]);
@@ -104,7 +104,7 @@ namespace Test.Microsoft.Amqp.TestCases
                     Assert.Equal(m, delivery);
                 }
 
-                ReceivingAmqpLink newReceiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(linkTerminus);
+                ReceivingAmqpLink newReceiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(linkTerminus, nameof(ReceiverRecoveryTest));
                 Assert.Equal(originalReceiver.Name, newReceiver.Name);
                 Assert.Equal(originalReceiver.IsReceiver, newReceiver.IsReceiver);
                 Assert.Equal("MyPropValue", newReceiver.Settings.Properties["MyProp"]);
@@ -985,9 +985,6 @@ namespace Test.Microsoft.Amqp.TestCases
                 AmqpSession recoverableSession2 = await connection.OpenSessionAsync(new AmqpSessionSettings());
                 T1 link1 = await recoverableSession1.OpenLinkAsync<T1>(linkName, addressUri.AbsoluteUri);
 
-                bool linkStolenTriggered = false;
-                link1.LinkStolen += (sender, e) => linkStolenTriggered = true;
-
                 if (shouldClose)
                 {
                     await link1.CloseAsync();
@@ -997,8 +994,6 @@ namespace Test.Microsoft.Amqp.TestCases
                     link1.Abort();
                 }
 
-                // prepare the link terminus object used for link recovery. The link terminus object is only created if the link closes gracefully and link recovery is enabled.
-                AmqpLinkTerminus linkTerminus = shouldClose ? link1.Terminus : new AmqpLinkTerminus(link1.Settings, link1.UnsettledMap);
                 bool shouldLink1BeStolen = linkRecoveryEnabled && !shouldClose && !shouldAbort && typeof(T1) == typeof(T2);
                 if (openNewLink)
                 {
@@ -1006,10 +1001,14 @@ namespace Test.Microsoft.Amqp.TestCases
                 }
                 else
                 {
-                    await recoverableSession2.RecoverLinkAsync<T2>(linkTerminus);
+                    AmqpLinkIdentifier link2Identifier = new AmqpLinkIdentifier(link1.Name, typeof(T2) == typeof(ReceivingAmqpLink));
+                    await recoverableSession2.RecoverLinkAsync<T2>(new AmqpLinkTerminus(link2Identifier, link1.UnsettledMap), addressUri.AbsoluteUri);
                 }
 
-                Assert.Equal(shouldLink1BeStolen, linkStolenTriggered);
+                if (shouldLink1BeStolen)
+                {
+                    Assert.True(link1.State == AmqpObjectState.End && link1.TerminalException != null && link1.TerminalException.Message.Contains("link stealing"));
+                }
             }
             finally
             {
@@ -1087,9 +1086,9 @@ namespace Test.Microsoft.Amqp.TestCases
         /// <summary>
         /// Verify that the local and remote LinkTerminusManager has or does not have records of the given link termini, according the the shouldExist flag.
         /// </summary>
-        static void AssertLinkTermini(bool shouldExist, AmqpLinkTerminusManager localTerminusManager, AmqpLinkTerminusManager remoteTerminusManager, AmqpLinkTerminus localSendLinkTerminus, AmqpLinkTerminus localReceiveTerminus)
+        static void AssertLinkTermini(bool shouldExist, AmqpLinkTerminusManager localTerminusManager, AmqpLinkTerminusManager remoteTerminusManager, AmqpLinkTerminus localSenderTerminus, AmqpLinkTerminus localReceiverTerminus)
         {
-            if (localSendLinkTerminus == null || localReceiveTerminus == null)
+            if (localSenderTerminus == null || localReceiverTerminus == null)
             {
                 // the link terminus may be null if link recovery is not enabled.
                 Assert.False(shouldExist);
@@ -1097,13 +1096,13 @@ namespace Test.Microsoft.Amqp.TestCases
             }
 
             // The link terminus from the broker side should have the same link names but opposite sender/receiver roles.
-            AmqpLinkTerminus brokerSenderTerminus = new AmqpLinkTerminus(new AmqpLinkSettings() { LinkName = localSendLinkTerminus.Settings.LinkName, Role = !localSendLinkTerminus.Settings.Role }, null);
-            AmqpLinkTerminus brokerReceiverTerminus = new AmqpLinkTerminus(new AmqpLinkSettings() { LinkName = localReceiveTerminus.Settings.LinkName, Role = !localReceiveTerminus.Settings.Role }, null);
+            AmqpLinkTerminus brokerSenderTerminus = new AmqpLinkTerminus(new AmqpLinkIdentifier(localSenderTerminus.Identifier.Name, !localSenderTerminus.Identifier.Role), null);
+            AmqpLinkTerminus brokerReceiverTerminus = new AmqpLinkTerminus(new AmqpLinkIdentifier(localReceiverTerminus.Identifier.Name, !localReceiverTerminus.Identifier.Role), null);
 
-            Assert.True(localTerminusManager.TryGetValue(localSendLinkTerminus, out _) == shouldExist, $"local sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
-            Assert.True(localTerminusManager.TryGetValue(localReceiveTerminus, out _) == shouldExist, $"local receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
-            Assert.True(remoteTerminusManager.TryGetValue(brokerSenderTerminus, out _) == shouldExist, $"remote sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteTerminusManager.ExpirationPolicy}");
-            Assert.True(remoteTerminusManager.TryGetValue(brokerReceiverTerminus, out _) == shouldExist, $"remote receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteTerminusManager.ExpirationPolicy}");
+            Assert.True(localTerminusManager.TryGetLinkTerminus(localSenderTerminus.Identifier, out _) == shouldExist, $"local sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
+            Assert.True(localTerminusManager.TryGetLinkTerminus(localReceiverTerminus.Identifier, out _) == shouldExist, $"local receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {localTerminusManager.ExpirationPolicy}");
+            Assert.True(remoteTerminusManager.TryGetLinkTerminus(brokerSenderTerminus.Identifier, out _) == shouldExist, $"remote sender terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteTerminusManager.ExpirationPolicy}");
+            Assert.True(remoteTerminusManager.TryGetLinkTerminus(brokerReceiverTerminus.Identifier, out _) == shouldExist, $"remote receiver terminus should {(shouldExist ? "still" : "not")} exist due to expiry policy. ExpiryPolicy: {remoteTerminusManager.ExpirationPolicy}");
         }
 
         /// <summary>
@@ -1130,6 +1129,7 @@ namespace Test.Microsoft.Amqp.TestCases
             bool shouldAbortDelivery = false,
             bool testSettleOnSend = false) where T : AmqpLink
         {
+            string queueName = testName + "-queue";
             TestAmqpConnection connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
             try
             {
@@ -1148,12 +1148,15 @@ namespace Test.Microsoft.Amqp.TestCases
                 // Set up the unsettled message for both the local unsettled map and the remote unsettled map.
                 var unsettledMap = new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance);
                 var deliveryTag = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
+                AmqpLinkIdentifier remoteLinkIdentifier = new AmqpLinkIdentifier($"{testName}1", typeof(T) == typeof(SendingAmqpLink)); // the role needs to be opposite of the usual value because it's seen from remote perspective.
                 AmqpMessage localUnsettledMessage = hasLocalDeliveryState ? AddClientUnsettledDelivery(unsettledMap, deliveryTag, localDeliveryState) : null;
-                AmqpMessage remoteUnsettledMessage = hasRemoteDeliveryState ? AddBrokerUnsettledDelviery($"{testName}1", deliveryTag, remoteDeliveryState) : null;
+                AmqpMessage remoteUnsettledMessage = hasRemoteDeliveryState ? AddBrokerUnsettledDelviery(remoteLinkIdentifier, deliveryTag, remoteDeliveryState) : null;
                 AmqpMessage senderSideUnsettledMessage = typeof(T) == typeof(SendingAmqpLink) ? localUnsettledMessage : remoteUnsettledMessage;
                 AmqpMessage receiverSideUnsettledMessage = typeof(T) == typeof(SendingAmqpLink) ? remoteUnsettledMessage : localUnsettledMessage;
 
-                var localLink = await OpenTestLinkAsync<T>(session, $"{testName}1", unsettledMap);
+                AmqpLink localLink = await session.RecoverLinkAsync<T>(new AmqpLinkTerminus(new AmqpLinkIdentifier(remoteLinkIdentifier.Name, !remoteLinkIdentifier.Role), unsettledMap), queueName);
+                await Task.Delay(1000); // wait for the sender to potentially send the initial deliveries
+
                 Transfer expectedTransfer = receiverSideConnection.ReceivedPerformatives.Last.Value as Transfer;
                 bool transferSettled = expectedTransfer?.Settled == true;
                 bool shouldSetResumeFlag = typeof(T) == typeof(SendingAmqpLink) ? hasRemoteDeliveryState : hasLocalDeliveryState;
@@ -1175,7 +1178,7 @@ namespace Test.Microsoft.Amqp.TestCases
 
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
-                        var testDummyReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{testName}1-testReceiver", $"{testName}1");
+                        var testDummyReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{testName}1-testReceiver", queueName);
                         await TestReceivingMessageAsync(testDummyReceiver, transferSettled || shouldAbortDelivery ? null : senderSideUnsettledMessage);
                     }
                     else
@@ -1193,8 +1196,8 @@ namespace Test.Microsoft.Amqp.TestCases
                     Assert.True(receiverSideConnection.ReceivedPerformatives.Last.Value is Attach);
                     if (typeof(T) == typeof(SendingAmqpLink))
                     {
-                        var receiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{testName}1-testReceiver", $"{testName}1");
-                        await TestReceivingMessageAsync(receiver, null);
+                        var testDummyReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>($"{testName}1-testReceiver", queueName);
+                        await TestReceivingMessageAsync(testDummyReceiver, null);
                     }
                     else
                     {
@@ -1213,10 +1216,13 @@ namespace Test.Microsoft.Amqp.TestCases
                     // When settle mode is SettleMode.SettleOnSend, the client sender does not need to resend the message upon open.
                     unsettledMap = new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance);
                     deliveryTag = new ArraySegment<byte>(Guid.NewGuid().ToByteArray());
+                    remoteLinkIdentifier = new AmqpLinkIdentifier($"{testName}2", typeof(T) == typeof(SendingAmqpLink)); // the role needs to be opposite of the usual value because it's seen from remote perspective.
                     localUnsettledMessage = hasLocalDeliveryState ? AddClientUnsettledDelivery(unsettledMap, deliveryTag, localDeliveryState) : null;
-                    remoteUnsettledMessage = hasRemoteDeliveryState ? AddBrokerUnsettledDelviery(testName, deliveryTag, remoteDeliveryState) : null;
+                    remoteUnsettledMessage = hasRemoteDeliveryState ? AddBrokerUnsettledDelviery(remoteLinkIdentifier, deliveryTag, remoteDeliveryState) : null;
 
-                    localLink = await OpenTestLinkAsync<T>(session, $"{testName}2", unsettledMap, SettleMode.SettleOnSend);
+                    AmqpLink localLink2 = await session.RecoverLinkAsync<T>(localLink.Terminus, localLink.Settings);
+                    await Task.Delay(1000); // wait for the sender to potentially send the initial deliveries
+
                     Assert.True(receiverSideConnection.ReceivedPerformatives.Last.Value is Attach);
 
                     if (txController != null)
@@ -1231,7 +1237,7 @@ namespace Test.Microsoft.Amqp.TestCases
                     }
                     else
                     {
-                        await TestReceivingMessageAsync(localLink as ReceivingAmqpLink, null);
+                        await TestReceivingMessageAsync(localLink2 as ReceivingAmqpLink, null);
                     }
                 }
             }
@@ -1261,57 +1267,31 @@ namespace Test.Microsoft.Amqp.TestCases
             return message;
         }
 
-        static AmqpMessage AddBrokerUnsettledDelviery(string linkName, ArraySegment<byte> deliveryTag, DeliveryState deliveryState)
+        static AmqpMessage AddBrokerUnsettledDelviery(AmqpLinkIdentifier linkIdentifier, ArraySegment<byte> deliveryTag, DeliveryState deliveryState)
         {
             AmqpMessage message = AmqpMessage.Create("My Message");
             message.DeliveryTag = deliveryTag;
             message.State = deliveryState;
             BrokerMessage brokerMessage = new BrokerMessage(message) { DeliveryTag = deliveryTag, State = deliveryState };
-            broker.MockUnsettledReceivingDeliveries.AddOrUpdate(linkName, (key) => new List<Delivery>() { brokerMessage },
-                (key, unsettledDeliveries) =>
-                {
-                    unsettledDeliveries.Add(brokerMessage);
-                    return unsettledDeliveries;
-                });
+
+            var unsettledDeliveries = new Dictionary<ArraySegment<byte>, Delivery>();
+            unsettledDeliveries.Add(brokerMessage.DeliveryTag, brokerMessage);
+            AmqpLinkTerminus brokerInjectedLinkTerminus = new AmqpLinkTerminus(linkIdentifier, unsettledDeliveries);
+            broker.LinkTerminusManager.TryAddLinkTerminus(linkIdentifier, brokerInjectedLinkTerminus);
+
+            //broker.MockUnsettledLinkDeliveries.AddOrUpdate(linkIdentifier, (key) => new List<Delivery>() { brokerMessage },
+            //    (key, unsettledDeliveries) =>
+            //    {
+            //        unsettledDeliveries.Add(brokerMessage);
+            //        return unsettledDeliveries;
+            //    });
 
             return message;
         }
 
-        static async Task<AmqpLink> OpenTestLinkAsync<T>(AmqpSession session, string linkName, Dictionary<ArraySegment<byte>, Delivery> unsettledMap, SettleMode settleMode = SettleMode.SettleOnReceive) where T : AmqpLink
+        static async Task<AmqpLink> RecoverTestlinkAsync<T>(AmqpSession session, AmqpLinkTerminus linkTerminus, SettleMode settleMode = SettleMode.SettleOnReceive) where T : AmqpLink
         {
-            Type linkType = typeof(T);
-            AmqpLinkSettings linkSettings = new AmqpLinkSettings();
-            linkSettings.Unsettled = new AmqpMap(
-                unsettledMap.ToDictionary(
-                    kvPair => kvPair.Key,
-                    kvPair => kvPair.Value.State),
-                MapKeyByteArrayComparer.Instance);
-
-            if (linkType == typeof(SendingAmqpLink))
-            {
-                linkSettings.LinkName = linkName;
-                linkSettings.Role = false;
-                linkSettings.Source = new Source() { ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(session.Connection.LinkTerminusManager.ExpirationPolicy) };
-                linkSettings.Target = new Target() { Address = linkName };
-            }
-            else if (linkType == typeof(ReceivingAmqpLink))
-            {
-                linkSettings.LinkName = linkName;
-                linkSettings.Role = true;
-                linkSettings.Source = new Source() { Address = linkName };
-                linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
-                linkSettings.AutoSendFlow = true;
-                linkSettings.Target = new Target() { ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(session.Connection.LinkTerminusManager.ExpirationPolicy) };
-            }
-            else
-            {
-                throw new NotSupportedException(linkType.Name);
-            }
-
-            linkSettings.SettleType = settleMode;
-            var terminus = new AmqpLinkTerminus(linkSettings, unsettledMap);
-
-            AmqpLink link = await session.RecoverLinkAsync<T>(terminus);
+            AmqpLink link = await session.RecoverLinkAsync<T>(linkTerminus, addressUri.AbsoluteUri);
             await Task.Delay(1000); // wait for the sender to potentially send the initial deliveries
             return link;
         }
@@ -1324,6 +1304,8 @@ namespace Test.Microsoft.Amqp.TestCases
         /// <param name="expectedMessage">The expected message to be received. Null if there should be no message received.</param>
         static async Task TestReceivingMessageAsync(ReceivingAmqpLink receiver, AmqpMessage expectedMessage)
         {
+            var brokerPointer = broker;
+            var receiverAddress = receiver.Settings.Address();
             try
             {
                 AmqpMessage received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2));

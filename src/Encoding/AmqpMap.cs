@@ -54,7 +54,6 @@ namespace Microsoft.Azure.Amqp.Encoding
 
             foreach (DictionaryEntry entry in value)
             {
-                
                 this.Add(entry.Key is MapKey mapKey ? mapKey : new MapKey(entry.Key), entry.Value);
             }
         }

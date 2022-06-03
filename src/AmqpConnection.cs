@@ -163,7 +163,7 @@ namespace Microsoft.Azure.Amqp
         /// <summary>
         /// Upon creation of a new link, decide if could have recoverable link terminus and have the corresponding settings by checking if there is a valid <see cref="AmqpLinkTerminusManager"/>.
         /// </summary>
-        internal bool LinkRecoveryEnabled => this.LinkTerminusManager != null && this.LinkTerminusManager.ExpirationPolicy > LinkTerminusExpirationPolicy.NONE;
+        internal bool LinkRecoveryEnabled => this.LinkTerminusManager != null;
 
         /// <summary>
         /// Creates a <see cref="AmqpSession"/> and adds it to the session collection.
@@ -426,8 +426,6 @@ namespace Microsoft.Azure.Amqp
                 {
                     session.SafeClose();
                 }
-
-                session.ExpireLinkTermini(AmqpConstants.TerminusExpirationPolicy.ConnectionClose);
             }
         }
 
@@ -650,7 +648,6 @@ namespace Microsoft.Azure.Amqp
                     }
                 }
 
-                session.ExpireLinkTermini(AmqpConstants.TerminusExpirationPolicy.SessionEnd);
                 AmqpTrace.Provider.AmqpRemoveSession(thisPtr, session, session.LocalChannel, session.RemoteChannel ?? 0);
             }
         }

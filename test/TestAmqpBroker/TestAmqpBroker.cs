@@ -46,7 +46,7 @@ namespace TestAmqpBroker
             this.txnManager = new TxnManager();
             this.connections = new Dictionary<SequenceNumber, AmqpConnection>();
             this.queues = new Dictionary<string, TestQueue>();
-            this.MockUnsettledReceivingDeliveries = new ConcurrentDictionary<string, ICollection<Delivery>>();
+            this.MockUnsettledLinkDeliveries = new ConcurrentDictionary<AmqpLinkIdentifier, ICollection<Delivery>>();
             this.LinkTerminusManager = new AmqpLinkTerminusManager();
             if (queues != null)
             {
@@ -67,7 +67,7 @@ namespace TestAmqpBroker
         /// Used to mock unsettled deliveries when the broker is on the receiving side. Key is the link name, values are the unsettled deliveries to be mocked.
         /// Be aware that the unsettled deliveries will apply to both the senders and receivers with the same link name.
         /// </summary>
-        internal ConcurrentDictionary<string, ICollection<Delivery>> MockUnsettledReceivingDeliveries { get; }
+        internal ConcurrentDictionary<AmqpLinkIdentifier, ICollection<Delivery>> MockUnsettledLinkDeliveries { get; }
 
         public void Start()
         {
@@ -137,7 +137,7 @@ namespace TestAmqpBroker
         public void Stop()
         {
             this.transportListener?.Close();
-            this.MockUnsettledReceivingDeliveries.Clear();
+            this.MockUnsettledLinkDeliveries.Clear();
             lock (this.connections)
             {
                 if (this.connections.Count > 0)
@@ -298,26 +298,26 @@ namespace TestAmqpBroker
                 link = new SendingAmqpLink(session, settings);
             }
 
-            Fx.Assert(settings.Unsettled == null, "The unsettled messages should be null at this point without anybody setting it.");
-            if (this.MockUnsettledReceivingDeliveries.TryGetValue(settings.LinkName, out ICollection<Delivery> unsettledDeliveries))
-            {
-                Dictionary<ArraySegment<byte>, DeliveryState> unsettled = new Dictionary<ArraySegment<byte>, DeliveryState>(ByteArrayComparer.Instance);
-                AmqpLinkTerminus terminus = new AmqpLinkTerminus(settings, new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance));
+            //Fx.Assert(settings.Unsettled == null, "The unsettled messages should be null at this point without anybody setting it.");
+            //if (this.MockUnsettledLinkDeliveries.TryGetValue(settings.LinkIdentifier, out ICollection<Delivery> unsettledDeliveries))
+            //{
+            //    Dictionary<ArraySegment<byte>, DeliveryState> unsettledDeliveryStates = new Dictionary<ArraySegment<byte>, DeliveryState>(ByteArrayComparer.Instance);
+            //    AmqpLinkTerminus terminus = new AmqpLinkTerminus(settings.LinkIdentifier, new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance));
 
-                foreach (Delivery unsettledDelivery in unsettledDeliveries)
-                {
-                    unsettled.Add(unsettledDelivery.DeliveryTag, unsettledDelivery.State);
-                    terminus.UnsettledMap.Add(unsettledDelivery.DeliveryTag, unsettledDelivery);
-                }
+            //    foreach (Delivery unsettledDelivery in unsettledDeliveries)
+            //    {
+            //        unsettledDeliveryStates.Add(unsettledDelivery.DeliveryTag, unsettledDelivery.State);
+            //        terminus.UnsettledMap.Add(unsettledDelivery.DeliveryTag, unsettledDelivery);
+            //    }
 
-                if (unsettled.Count > 0)
-                {
-                    terminus.Settings.Unsettled = new AmqpMap(unsettled, MapKeyByteArrayComparer.Instance);
-                    link.Terminus = terminus;
-                }
-            }
+            //    link.Terminus = terminus;
+            //    //if (unsettledDeliveryStates.Count > 0)
+            //    //{
+            //    //    link.Settings.Unsettled = new AmqpMap(unsettledDeliveryStates, MapKeyByteArrayComparer.Instance);
+            //    //}
+            //}
 
-            link.Closed += new EventHandler((object sender, EventArgs e) => this.RemoveMockUnsettledDelivery(link.Name));
+            link.Closed += new EventHandler((object sender, EventArgs e) => this.RemoveMockUnsettledDelivery(link.Settings.LinkIdentifier));
             return link;
         }
 
@@ -365,9 +365,9 @@ namespace TestAmqpBroker
             CompletedAsyncResult.End(result);
         }
 
-        void RemoveMockUnsettledDelivery(string linkName)
+        void RemoveMockUnsettledDelivery(AmqpLinkIdentifier identifier)
         {
-            this.MockUnsettledReceivingDeliveries.TryRemove(linkName, out _);
+            this.MockUnsettledLinkDeliveries.TryRemove(identifier, out _);
         }
 
         static X509Certificate2 GetCertificate(string certFindValue)

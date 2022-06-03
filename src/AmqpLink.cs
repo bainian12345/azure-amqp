@@ -90,11 +90,6 @@ namespace Microsoft.Azure.Amqp
         public event EventHandler PropertyReceived;
 
         /// <summary>
-        /// A handler that's fired when this link is closing due to link stealing.
-        /// </summary>
-        public event EventHandler LinkStolen;
-
-        /// <summary>
         /// Gets the link name.
         /// </summary>
         public string Name
@@ -978,7 +973,6 @@ namespace Microsoft.Azure.Amqp
 
         internal void OnLinkStolen()
         {
-            this.LinkStolen?.Invoke(this, EventArgs.Empty);
             this.SafeClose(new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, this.Name, this.Session.Connection.Settings.ContainerId)));
         }
 
@@ -1205,6 +1199,9 @@ namespace Microsoft.Azure.Amqp
             try
             {
                 this.OnReceiveRemoteUnsettledDeliveries(attach);
+
+                // TODO: need to negotiate the properties in case they are different between local and remote.
+                // Honor the Source for sender and Target for Receiver.
                 if (attach.MaxMessageSize() != 0)
                 {
                     this.settings.MaxMessageSize = Math.Min(this.settings.MaxMessageSize(), attach.MaxMessageSize());

@@ -467,6 +467,28 @@ namespace Microsoft.Azure.Amqp
             return new AmqpSymbol();
         }
 
+        /// <summary>
+        /// Return the terminus expiry time from the link settings by checking the Target or Source, depending if the link is a receiver or sender.
+        /// </summary>
+        /// <param name="linkSettings">The link settings to obtain the terminus expiry timeout from.</param>
+        public static TimeSpan Timeout(this AmqpLinkSettings linkSettings)
+        {
+            uint timeoutInSeconds = 0;
+            if (linkSettings != null)
+            {
+                if (linkSettings.IsReceiver() && linkSettings.Target is Target target && target.Timeout.HasValue)
+                {
+                    timeoutInSeconds = target.Timeout.Value;
+                }
+                else if (!linkSettings.IsReceiver() && linkSettings.Source is Source source && source.Timeout.HasValue)
+                {
+                    timeoutInSeconds = source.Timeout.Value;
+                }
+            }
+
+            return TimeSpan.FromSeconds(timeoutInSeconds);
+        }
+
         // settings
         /// <summary>
         /// Updates or inserts a value in begin.properties.

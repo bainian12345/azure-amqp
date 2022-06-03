@@ -17,10 +17,8 @@ namespace Microsoft.Azure.Amqp
     public class AmqpLinkTerminusManager
     {
         static readonly TimeSpan DefaultExpiryTimeout = TimeSpan.Zero;
-
         object linkTerminiLock;
-        Dictionary<AmqpLinkTerminus, AmqpLink> linkTermini;
-        Dictionary<AmqpLinkTerminus, AmqpLink> suspendedLinkTermini;
+        IDictionary<AmqpLinkIdentifier, AmqpLinkTerminus> linkTermini;
 
         /// <summary>
         /// Create a new instance of <see cref="AmqpLinkTerminusManager"/>.
@@ -28,8 +26,7 @@ namespace Microsoft.Azure.Amqp
         public AmqpLinkTerminusManager()
         {
             this.linkTerminiLock = new object();
-            this.linkTermini = new Dictionary<AmqpLinkTerminus, AmqpLink>();
-            this.suspendedLinkTermini = new Dictionary<AmqpLinkTerminus, AmqpLink>();
+            this.linkTermini = new Dictionary<AmqpLinkIdentifier, AmqpLinkTerminus>();
         }
 
         /// <summary>
@@ -50,13 +47,13 @@ namespace Microsoft.Azure.Amqp
             switch (linkTerminusExpirationPolicy)
             {
                 case LinkTerminusExpirationPolicy.LINK_DETACH:
-                    return AmqpConstants.TerminusExpirationPolicy.LinkDetach;
+                    return TerminusExpiryPolicy.LinkDetach;
                 case LinkTerminusExpirationPolicy.SESSION_END:
-                    return AmqpConstants.TerminusExpirationPolicy.SessionEnd;
+                    return TerminusExpiryPolicy.SessionEnd;
                 case LinkTerminusExpirationPolicy.CONNECTION_CLOSE:
-                    return AmqpConstants.TerminusExpirationPolicy.ConnectionClose;
+                    return TerminusExpiryPolicy.ConnectionClose;
                 case LinkTerminusExpirationPolicy.NEVER:
-                    return AmqpConstants.TerminusExpirationPolicy.Never;
+                    return TerminusExpiryPolicy.Never;
                 default:
                     return new AmqpSymbol(null);
             }
@@ -77,151 +74,136 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         public static bool IsValidTerminusExpirationPolicy(AmqpSymbol symbol)
         {
-            return symbol.Equals(AmqpConstants.TerminusExpirationPolicy.LinkDetach) ||
-                symbol.Equals(AmqpConstants.TerminusExpirationPolicy.SessionEnd) ||
-                symbol.Equals(AmqpConstants.TerminusExpirationPolicy.ConnectionClose) ||
-                symbol.Equals(AmqpConstants.TerminusExpirationPolicy.Never);
+            return symbol.Equals(TerminusExpiryPolicy.LinkDetach) ||
+                symbol.Equals(TerminusExpiryPolicy.SessionEnd) ||
+                symbol.Equals(TerminusExpiryPolicy.ConnectionClose) ||
+                symbol.Equals(TerminusExpiryPolicy.Never);
         }
 
         /// <summary>
-        /// Try to get the value under the given key. Return true and the value if it was found.
+        /// Try to get the link terminus with the given link identifier. Return true if the link terminus has been found.
         /// </summary>
-        internal bool TryGetValue(AmqpLinkTerminus key, out AmqpLink value)
+        /// <param name="linkIdentifier">The unique identifier of a link endpoint which will be used as a key to identify the link terminus.</param>
+        /// <param name="linkTerminus">The link terminus object associated with the link identifier.</param>
+        public bool TryGetLinkTerminus(AmqpLinkIdentifier linkIdentifier, out AmqpLinkTerminus linkTerminus)
         {
             lock (this.linkTerminiLock)
             {
-                return this.linkTermini.TryGetValue(key, out value);
+                return this.linkTermini.TryGetValue(linkIdentifier, out linkTerminus);
             }
         }
 
         /// <summary>
-        /// Add the link terminus to be tracked. If there is already an existing link associated with this link terminus, close the existing link due to link stealing.
-        /// Also try to remove it from the expiring link termini map, since adding it means makes it active again, it should no long expire.
+        /// Try to add a link terminus object which will be associated with the link identifier.
+        /// Returns true if it was successfully added, or false if there is already an existing entry and the value is not added.
         /// </summary>
-        internal void RegisterLinkTerminus(AmqpLinkTerminus key, AmqpLink value)
+        /// <param name="linkIdentifier">The unique identifier of a link endpoint which will be used as a key to identify the link terminus.</param>
+        /// <param name="linkTerminus">The link terminus object to be added.</param>
+        public bool TryAddLinkTerminus(AmqpLinkIdentifier linkIdentifier, AmqpLinkTerminus linkTerminus)
         {
-            Fx.Assert(key != null && value != null, "Should not be adding a null link terminus.");
             lock (this.linkTerminiLock)
             {
-                this.TryStealLink(key, value);
-                if (!this.linkTermini.ContainsKey(key))
+                if (this.linkTermini.ContainsKey(linkIdentifier))
                 {
-                    this.linkTermini.Add(key, value);
+                    return false;
                 }
 
-                this.suspendedLinkTermini.Remove(key);
+                this.linkTermini.Add(linkIdentifier, linkTerminus);
+                return true;
             }
         }
 
         /// <summary>
-        /// Remove the entry with the given key and output the corresponding value if available. Return true if the value was removed, or false if the key was not found and nothing was removed.
+        /// Add the link terminus to be tracked by this manager. Also associate the given link with the given link terminus.
         /// </summary>
-        internal bool TryRemove(AmqpLinkTerminus key, out AmqpLink value)
+        internal void RegisterLink(AmqpLink link)
         {
-            Fx.Assert(key != null, "Should not be removing a null link terminus.");
+            Fx.Assert(link != null, "Should not be registering a null link.");
+            AmqpLinkTerminus linkTerminus = null;
+            AmqpLink stolenLink = null;
             lock (this.linkTerminiLock)
             {
-                if (this.linkTermini.TryGetValue(key, out value))
+                if (this.linkTermini.TryGetValue(link.Settings.LinkIdentifier, out linkTerminus))
                 {
-                    this.linkTermini.Remove(key);
-                    return true;
+                    this.linkTermini.Remove(link.Settings.LinkIdentifier);
+                    stolenLink = linkTerminus.Link;
+                }
+                else
+                {
+                    linkTerminus = new AmqpLinkTerminus(link.Settings.LinkIdentifier, link.UnsettledMap);
                 }
 
-                return false;
+                linkTerminus.AssociateLink(link);
+                this.linkTermini.Add(link.Settings.LinkIdentifier, linkTerminus);
             }
-        }
 
-        /// <summary>
-        /// If this link terminus manager already has a link associated with the given link terminus, and the associated 
-        /// link is different than the given link, then close the associated link due to link stealing.
-        /// Return true if there is an existing link closed due to link stealing, return false otherwise.
-        /// </summary>
-        internal bool TryStealLink(AmqpLinkTerminus linkTerminus, AmqpLink link)
-        {
-            AmqpLink existingLink = null;
-            bool shouldStealLink = true;
-            lock (this.linkTerminiLock)
+            if (stolenLink != null && stolenLink != link)
             {
-                shouldStealLink = this.linkTermini.TryGetValue(linkTerminus, out existingLink) && existingLink != link; 
-                if (shouldStealLink)
-                {
-                    this.linkTermini.Remove(linkTerminus);
-                }
+                stolenLink.OnLinkStolen();
             }
 
-            if (shouldStealLink)
+            linkTerminus.Suspended += this.OnSuspendLinkTerminus;
+            linkTerminus.Expired += this.OnExpireLinkTerminus;
+
+            // suspend the link terminus when the corresponding AmqpObject is closed.
+            EventHandler onSuspendTerminus = null;
+            onSuspendTerminus = (sender, e) =>
             {
-                existingLink.OnLinkStolen();
-            }
+                linkTerminus.OnSuspend();
+                ((AmqpObject)sender).Closed -= onSuspendTerminus;
+            };
 
-            return shouldStealLink;
+            AmqpSymbol expiryPolicy = link.Settings.ExpiryPolicy();
+            if (expiryPolicy.Equals(TerminusExpiryPolicy.LinkDetach) || expiryPolicy.Value == null)
+            {
+                link.Closed += onSuspendTerminus;
+            }
+            else if (expiryPolicy.Equals(TerminusExpiryPolicy.SessionEnd))
+            {
+                link.Session.Closed += onSuspendTerminus;
+            }
+            else if (expiryPolicy.Equals(TerminusExpiryPolicy.ConnectionClose))
+            {
+                link.Session.Connection.Closed += onSuspendTerminus;
+            }
         }
 
         /// <summary>
         /// Expire the link terminus for the given <see cref="AmqpLink"/>. Should be called when the ExpiryPolicy of the given link is triggered.
         /// </summary>
-        internal void SuspendLink(AmqpLink link)
+        internal void OnSuspendLinkTerminus(object sender, EventArgs e)
         {
-            Fx.Assert(link?.Terminus != null, "Cannot expire a null link terminus");
-
-            bool alreadySuspended = true;
-            lock (this.linkTerminiLock)
+            AmqpLinkTerminus linkTerminus = (AmqpLinkTerminus)sender;
+            linkTerminus.Suspended -= this.OnSuspendLinkTerminus;
+            if (linkTerminus.Link.Settings.Timeout() > TimeSpan.Zero)
             {
-                if (!this.suspendedLinkTermini.ContainsKey(link.Terminus))
-                {
-                    alreadySuspended = false;
-                    this.suspendedLinkTermini.Add(link.Terminus, link);
-                }
+                Timer expireLinkEndpointsTimer = new Timer();
+                expireLinkEndpointsTimer.Elapsed += (s, e) => this.OnExpireLinkTerminusTimer(s, e, linkTerminus);
+                expireLinkEndpointsTimer.Interval = this.ExpiryTimeout.TotalMilliseconds;
+                expireLinkEndpointsTimer.AutoReset = false;
+                expireLinkEndpointsTimer.Enabled = true;
             }
-
-            if (!alreadySuspended)
+            else
             {
-                if (this.ExpiryTimeout > TimeSpan.Zero)
-                {
-                    Timer expireLinkEndpointsTimer = new Timer();
-                    expireLinkEndpointsTimer.Elapsed += (s, e) => this.OnExpireLinkTerminusTimer(s, e, link.Terminus);
-                    expireLinkEndpointsTimer.Interval = this.ExpiryTimeout.TotalMilliseconds;
-                    expireLinkEndpointsTimer.AutoReset = false;
-                    expireLinkEndpointsTimer.Enabled = true;
-                }
-                else
-                {
-                    // if expiry timeout is zero, do the removals immediately to avoid creating timers.
-                    this.ExpireLinkTerminus(link.Terminus);
-                }
+                linkTerminus.OnExpire();
             }
         }
 
-        void ExpireLinkTerminus(AmqpLinkTerminus linkTerminusToExpire)
+        void OnExpireLinkTerminus(object sender, EventArgs e)
         {
-            Fx.Assert(linkTerminusToExpire != null, "The link terminus to be expired should not be null.");
-            try
+            AmqpLinkTerminus linkTerminus = (AmqpLinkTerminus)sender;
+            linkTerminus.Expired -= this.OnExpireLinkTerminus;
+            lock (this.linkTerminiLock)
             {
-                lock (this.linkTerminiLock)
-                {
-                    if (this.suspendedLinkTermini.ContainsKey(linkTerminusToExpire))
-                    {
-                        // this link terminus is still marked for expiration, so we can remove it safely here.
-                        this.linkTermini.Remove(linkTerminusToExpire);
-                        this.suspendedLinkTermini.Remove(linkTerminusToExpire);
-                    }
-                }
-
-                linkTerminusToExpire.OnExpired();
-            }
-            catch (Exception ex) when (!Fx.IsFatal(ex))
-            {
-                AmqpTrace.Provider.AmqpLogError(nameof(AmqpLinkTerminusManager), nameof(ExpireLinkTerminus), ex);
-                throw;
+                this.linkTermini.Remove(linkTerminus.Identifier);
             }
         }
 
         void OnExpireLinkTerminusTimer(object sender, ElapsedEventArgs e, AmqpLinkTerminus linkTerminusToExpire)
         {
-            using ((Timer)sender)
-            {
-                this.ExpireLinkTerminus(linkTerminusToExpire);
-            }
+            linkTerminusToExpire.OnExpire();
+            Timer timer = (Timer)sender;
+            timer.Dispose();
         }
     }
 }

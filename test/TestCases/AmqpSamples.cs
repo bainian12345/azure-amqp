@@ -48,8 +48,8 @@ namespace Test.Microsoft.Azure.Amqp
         [Fact]
         public async Task LinkRecoverySample()
         {
-            string queue = "LinkRecoverySample";
-            broker.AddQueue(queue);
+            string queueName = "LinkRecoverySample";
+            broker.AddQueue(queueName);
 
             // Need to provide a AmqpLinkTerminusManager instance to ensure the uniqueness of the link endpoints and specify the desired expiration policy.
             var terminusManager = new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.NEVER };
@@ -64,9 +64,9 @@ namespace Test.Microsoft.Azure.Amqp
             {
                 // Send and receive the message normally.
                 var session = await connection.OpenSessionAsync();
-                var sender = await session.OpenLinkAsync<SendingAmqpLink>("sender", queue);
+                var sender = await session.OpenLinkAsync<SendingAmqpLink>("sender", queueName);
                 await sender.SendMessageAsync(AmqpMessage.Create("Hello World!"));
-                var receiver = await session.OpenLinkAsync<ReceivingAmqpLink>("receiver", queue);
+                var receiver = await session.OpenLinkAsync<ReceivingAmqpLink>("receiver", queueName);
                 var message = await receiver.ReceiveMessageAsync();
 
                 // Restart the broker. All connections should be disconnected from the broker side.
@@ -81,7 +81,7 @@ namespace Test.Microsoft.Azure.Amqp
                 AmqpConnectionSettings connectionRecoverySettings = new AmqpConnectionSettings() { ContainerId = connection.Settings.ContainerId };
                 connection = await factory.OpenConnectionAsync(addressUri, connectionRecoverySettings, AmqpConstants.DefaultTimeout);
                 session = await connection.OpenSessionAsync();
-                receiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(receiver.Terminus);
+                receiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(receiver.Terminus, queueName);
                 receiver.AcceptMessage(message);
             }
             catch (Exception e)

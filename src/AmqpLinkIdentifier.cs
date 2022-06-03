@@ -6,16 +6,32 @@ namespace Microsoft.Azure.Amqp
     using Microsoft.Azure.Amqp.Framing;
     using System;
 
-    class AmqpLinkIdentifier
+    /// <summary>
+    /// An object used to uniquely identify a link endpoint.
+    /// </summary>
+    public class AmqpLinkIdentifier
     {
         string linkName;
         bool? role;
 
+        /// <summary>
+        /// Constructor an object used to uniquely identify a link endpoint by using the link name and the link's role (sender/receiver).
+        /// </summary>
         public AmqpLinkIdentifier(string linkName, bool? role)
         {
             this.linkName = linkName;
             this.role = role;
         }
+
+        /// <summary>
+        /// Returns the link name.
+        /// </summary>
+        public string Name { get => this.linkName; }
+
+        /// <summary>
+        /// Returns the link role.
+        /// </summary>
+        public bool? Role { get => this.role; }
 
         /// <summary>
         /// Determines whether two link identifiers are equal based on <see cref="Attach.LinkName"/>

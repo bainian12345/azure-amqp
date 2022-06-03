@@ -468,10 +468,10 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         protected override void OnReceiveRemoteUnsettledDeliveries(Attach attach)
         {
-            if (this.Terminus?.Settings.Unsettled != null)
+            if (this.Settings.Unsettled != null)
             {
                 Fx.Assert(this.Terminus != null, "If link recovery is enabled, the link terminus should not be null.");
-                foreach (KeyValuePair<MapKey, object> pair in this.Terminus.Settings.Unsettled)
+                foreach (KeyValuePair<MapKey, object> pair in this.Settings.Unsettled)
                 {
                     var deliveryTagMapKey = pair.Key;
                     ArraySegment<byte> deliveryTag = (ArraySegment<byte>)deliveryTagMapKey.Key;

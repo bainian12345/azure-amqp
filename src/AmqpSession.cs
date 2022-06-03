@@ -121,56 +121,39 @@ namespace Microsoft.Azure.Amqp
         /// <returns>A task that returns a link on completion.</returns>
         public Task<T> OpenLinkAsync<T>(string name, string address) where T : AmqpLink
         {
-            AmqpLink link;
-            Type linkType = typeof(T);
-            AmqpLinkSettings linkSettings = new AmqpLinkSettings();
-            linkSettings.LinkName = name;
-            if (linkType == typeof(SendingAmqpLink))
-            {
-                linkSettings.Role = false;
-                linkSettings.Source = new Source();
-                linkSettings.Target = new Target() { Address = address };
-
-                if (this.Connection.LinkRecoveryEnabled)
-                {
-                    Source source = linkSettings.Source as Source;
-                    source.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
-                }
-
-                link = new SendingAmqpLink(linkSettings);
-            }
-            else if (linkType == typeof(ReceivingAmqpLink))
-            {
-                linkSettings.Role = true;
-                linkSettings.Source = new Source() { Address = address };
-                linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
-                linkSettings.AutoSendFlow = true;
-                linkSettings.Target = new Target();
-
-                if (this.Connection.LinkRecoveryEnabled)
-                {
-                    Target target = linkSettings.Target as Target;
-                    target.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
-                }
-
-                link = new ReceivingAmqpLink(linkSettings);
-            }
-            else
-            {
-                throw new NotSupportedException(linkType.Name);
-            }
-
+            AmqpLinkSettings linkSettings = CreateLinkSettings<T>(name, address);
+            AmqpLink link = CreateLink<T>(linkSettings);
             return this.AttachAndOpenLinkAsync<T>(link);
         }
 
         /// <summary>
-        /// Create and open a new <see cref="AmqpLink"/> to a node at the given address with the provided settings.
+        /// Create and open a new <see cref="AmqpLink"/> to a node at the given address with default link settings.
         /// This overload should only be used for recovering links which have previously existed.
         /// </summary>
         /// <typeparam name="T">The type of link. Only <see cref="SendingAmqpLink"/> and <see cref="ReceivingAmqpLink"/> are supported.</typeparam>
         /// <param name="linkTerminus">A previously existing link whose link settings and unsettled map would be used to reconstruct a new link.</param>
+        /// <param name="address">The address to which the link should connect to.</param>
         /// <returns>A task that returns a new link on completion.</returns>
-        public Task<T> RecoverLinkAsync<T>(AmqpLinkTerminus linkTerminus) where T : AmqpLink
+        public Task<T> RecoverLinkAsync<T>(AmqpLinkTerminus linkTerminus, string address) where T : AmqpLink
+        {
+            if (linkTerminus == null)
+            {
+                throw new ArgumentNullException(nameof(linkTerminus));
+            }
+
+            AmqpLinkSettings linkSettings = CreateLinkSettings<T>(linkTerminus.Identifier.Name, address);
+            return this.RecoverLinkAsync<T>(linkTerminus, linkSettings);
+        }
+
+        /// <summary>
+        /// Create and open a new <see cref="AmqpLink"/> to a node at the given address with the provided link settings.
+        /// This overload should only be used for recovering links which have previously existed.
+        /// </summary>
+        /// <typeparam name="T">The type of link. Only <see cref="SendingAmqpLink"/> and <see cref="ReceivingAmqpLink"/> are supported.</typeparam>
+        /// <param name="linkTerminus">A link terminus with previously existing link whose link settings and the unsettled map would be used to reconstruct a new link.</param>
+        /// <param name="linkSettings">The link settings that will be used to create the new link.</param>
+        /// <returns>A task that returns a new link on completion.</returns>
+        public Task<T> RecoverLinkAsync<T>(AmqpLinkTerminus linkTerminus, AmqpLinkSettings linkSettings) where T : AmqpLink
         {
             if (!this.Connection.LinkRecoveryEnabled)
             {
@@ -182,48 +165,28 @@ namespace Microsoft.Azure.Amqp
                 throw new ArgumentNullException(nameof(linkTerminus));
             }
 
-            AmqpLinkSettings linkSettings = linkTerminus.Settings;
-            Fx.Assert(linkSettings != null, $"The link settings of the {nameof(linkTerminus)} must not be null.");
-            Fx.Assert(!string.IsNullOrEmpty(linkSettings.LinkName), $"The link must have a valid link name");
-            
+            if (linkSettings == null)
+            {
+                throw new ArgumentNullException(nameof(linkSettings));
+            }
+
+            AmqpLink link = CreateLink<T>(linkSettings);
+            link.Terminus = linkTerminus;
             if (linkTerminus.UnsettledMap != null)
             {
-                // prepare the new link's unsettled state map to be sent upon reconnect
-                linkSettings.Unsettled = new AmqpMap(
+                foreach (var kvPair in linkTerminus.UnsettledMap)
+                {
+                    link.UnsettledMap.Add(kvPair);
+                }
+
+                link.Settings.Unsettled = new AmqpMap(
                     linkTerminus.UnsettledMap.ToDictionary(
                         kvPair => kvPair.Key,
                         kvPair => kvPair.Value.State),
                     MapKeyByteArrayComparer.Instance);
             }
 
-            AmqpLink newLink;
-            Type linkType = typeof(T);
-            if (linkType == typeof(SendingAmqpLink))
-            {
-                if (linkSettings.IsReceiver())
-                {
-                    throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpLinkOpenInvalidType, nameof(SendingAmqpLink), nameof(ReceivingAmqpLink)));
-                }
-
-                newLink = new SendingAmqpLink(linkSettings);
-            }
-            else if (linkType == typeof(ReceivingAmqpLink))
-            {
-                if (!linkSettings.IsReceiver())
-                {
-                    throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpLinkOpenInvalidType, nameof(ReceivingAmqpLink), nameof(SendingAmqpLink)));
-                }
-
-                linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
-                newLink = new ReceivingAmqpLink(linkSettings);
-            }
-            else
-            {
-                throw new NotSupportedException(linkType.Name);
-            }
-
-            newLink.Terminus = linkTerminus;
-            return this.AttachAndOpenLinkAsync<T>(newLink);
+            return this.AttachAndOpenLinkAsync<T>(link);
         }
 
         /// <summary>
@@ -244,16 +207,6 @@ namespace Microsoft.Azure.Amqp
                 if (this.links.ContainsKey(link.Settings.LinkIdentifier))
                 {
                     throw new AmqpException(AmqpErrorCode.ResourceLocked, AmqpResources.GetString(AmqpResources.AmqpLinkNameInUse, link.Name, this.LocalChannel));
-                }
-
-                if (this.Connection.LinkRecoveryEnabled)
-                {
-                    if (link.Terminus == null)
-                    {
-                        link.Terminus = new AmqpLinkTerminus(link.Settings, link.UnsettledMap);
-                    }
-
-                    this.Connection.LinkTerminusManager.RegisterLinkTerminus(link.Terminus, link);
                 }
 
                 link.Closed += onLinkClosed;
@@ -511,6 +464,11 @@ namespace Microsoft.Azure.Amqp
         {
             try
             {
+                if (this.Connection.LinkRecoveryEnabled)
+                {
+                    this.Connection.LinkTerminusManager.RegisterLink(link);
+                }
+
                 link.AttachTo(this);
                 await link.OpenAsync().ConfigureAwait(false);
                 return link as T;
@@ -652,14 +610,16 @@ namespace Microsoft.Azure.Amqp
                     this.links.TryGetValue(linkSettings.LinkIdentifier, out link);
                 }
 
-                if (this.Connection.LinkRecoveryEnabled && link != null && this.Connection.LinkTerminusManager.TryStealLink(link.Terminus, link))
-                {
-                    link = null;
-                }
-
                 if (link == null)
                 {
-                    if (!this.TryCreateRemoteLink(linkSettings, out link))
+                    if (this.TryCreateRemoteLink(linkSettings, out link))
+                    {
+                        if (this.Connection.LinkRecoveryEnabled)
+                        {
+                            this.Connection.LinkTerminusManager.RegisterLink(link);
+                        }
+                    }
+                    else
                     {
                         return;
                     }
@@ -728,26 +688,63 @@ namespace Microsoft.Azure.Amqp
             }
         }
 
-        /// <summary>
-        /// Expire all link termini under this session with the matching ExpiryPolicy.
-        /// </summary>
-        /// <param name="expiryPolicy"></param>
-        internal void ExpireLinkTermini(AmqpSymbol expiryPolicy)
+        AmqpLinkSettings CreateLinkSettings<T>(string name, string address) where T : AmqpLink
         {
-            Fx.Assert(AmqpLinkTerminusManager.IsValidTerminusExpirationPolicy(expiryPolicy), "The given ExpiryPolicy is not valid");
-            IEnumerable<AmqpLink> linksSnapshot = null;
-            lock (this.ThisLock)
+            Type linkType = typeof(T);
+            AmqpLinkSettings linkSettings = new AmqpLinkSettings();
+            linkSettings.LinkName = name;
+            if (linkType == typeof(SendingAmqpLink))
             {
-                linksSnapshot = this.linksByLocalHandle.Values;
-            }
+                linkSettings.Role = false;
+                linkSettings.Source = new Source();
+                linkSettings.Target = new Target() { Address = address };
 
-            foreach (var link in linksSnapshot)
-            {
-                if (link.Terminus != null && link.Settings.ExpiryPolicy().Equals(expiryPolicy))
+                if (this.Connection.LinkRecoveryEnabled)
                 {
-                    this.Connection.LinkTerminusManager.SuspendLink(link);
+                    Source source = linkSettings.Source as Source;
+                    source.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
                 }
             }
+            else if (linkType == typeof(ReceivingAmqpLink))
+            {
+                linkSettings.Role = true;
+                linkSettings.Source = new Source() { Address = address };
+                linkSettings.TotalLinkCredit = AmqpConstants.DefaultLinkCredit;
+                linkSettings.AutoSendFlow = true;
+                linkSettings.Target = new Target();
+
+                if (this.Connection.LinkRecoveryEnabled)
+                {
+                    Target target = linkSettings.Target as Target;
+                    target.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
+                }
+            }
+            else
+            {
+                throw new NotSupportedException(linkType.Name);
+            }
+
+            return linkSettings;
+        }
+
+        static AmqpLink CreateLink<T>(AmqpLinkSettings linkSettings) where T : AmqpLink
+        {
+            AmqpLink link;
+            Type linkType = typeof(T);
+            if (linkType == typeof(SendingAmqpLink) && linkSettings.Role.HasValue && !linkSettings.Role.Value)
+            {
+                link = new SendingAmqpLink(linkSettings);
+            }
+            else if (linkType == typeof(ReceivingAmqpLink) && linkSettings.Role.HasValue && linkSettings.Role.Value)
+            {
+                link = new ReceivingAmqpLink(linkSettings);
+            }
+            else
+            {
+                throw new NotSupportedException($"Cannot create a link with type {linkType.Name} and Role {linkSettings.Role}");
+            }
+
+            return link;
         }
 
         static void OnLinkClosed(object sender, EventArgs e)
@@ -771,12 +768,6 @@ namespace Microsoft.Azure.Amqp
 
             thisPtr.incomingChannel.OnLinkClosed(link);
             thisPtr.outgoingChannel.OnLinkClosed(link);
-
-            if (thisPtr.Connection.LinkRecoveryEnabled && (link.TerminusExpiryPolicy.Equals(AmqpConstants.TerminusExpirationPolicy.LinkDetach) || link.TerminusExpiryPolicy.Value == null))
-            {
-                thisPtr.Connection.LinkTerminusManager.SuspendLink(link);
-            }
-
             AmqpTrace.Provider.AmqpRemoveLink(thisPtr, link, link.LocalHandle ?? 0u, link.RemoteHandle ?? 0u, link.Name);
         }
 
