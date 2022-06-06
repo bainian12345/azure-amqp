@@ -172,20 +172,6 @@ namespace Microsoft.Azure.Amqp
 
             AmqpLink link = CreateLink<T>(linkSettings);
             link.Terminus = linkTerminus;
-            if (linkTerminus.UnsettledMap != null)
-            {
-                foreach (var kvPair in linkTerminus.UnsettledMap)
-                {
-                    link.UnsettledMap.Add(kvPair);
-                }
-
-                link.Settings.Unsettled = new AmqpMap(
-                    linkTerminus.UnsettledMap.ToDictionary(
-                        kvPair => kvPair.Key,
-                        kvPair => kvPair.Value.State),
-                    MapKeyByteArrayComparer.Instance);
-            }
-
             return this.AttachAndOpenLinkAsync<T>(link);
         }
 
@@ -204,9 +190,14 @@ namespace Microsoft.Azure.Amqp
                     throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpIllegalOperationState, "attach", this.State));
                 }
 
-                if (this.links.ContainsKey(link.Settings.LinkIdentifier))
+                if (this.links.TryGetValue(link.Settings.LinkIdentifier, out AmqpLink existingLink))
                 {
-                    throw new AmqpException(AmqpErrorCode.ResourceLocked, AmqpResources.GetString(AmqpResources.AmqpLinkNameInUse, link.Name, this.LocalChannel));
+                    existingLink.OnLinkStolen();
+                }
+
+                if (this.Connection.LinkRecoveryEnabled)
+                {
+                    this.Connection.LinkTerminusManager.RegisterLink(link);
                 }
 
                 link.Closed += onLinkClosed;
@@ -464,11 +455,6 @@ namespace Microsoft.Azure.Amqp
         {
             try
             {
-                if (this.Connection.LinkRecoveryEnabled)
-                {
-                    this.Connection.LinkTerminusManager.RegisterLink(link);
-                }
-
                 link.AttachTo(this);
                 await link.OpenAsync().ConfigureAwait(false);
                 return link as T;
@@ -612,14 +598,7 @@ namespace Microsoft.Azure.Amqp
 
                 if (link == null)
                 {
-                    if (this.TryCreateRemoteLink(linkSettings, out link))
-                    {
-                        if (this.Connection.LinkRecoveryEnabled)
-                        {
-                            this.Connection.LinkTerminusManager.RegisterLink(link);
-                        }
-                    }
-                    else
+                    if (!this.TryCreateRemoteLink(linkSettings, out link))
                     {
                         return;
                     }
@@ -703,6 +682,7 @@ namespace Microsoft.Azure.Amqp
                 {
                     Source source = linkSettings.Source as Source;
                     source.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
+                    source.Timeout = Convert.ToUInt32(this.Connection.LinkTerminusManager.ExpiryTimeout.TotalSeconds);
                 }
             }
             else if (linkType == typeof(ReceivingAmqpLink))
@@ -717,6 +697,7 @@ namespace Microsoft.Azure.Amqp
                 {
                     Target target = linkSettings.Target as Target;
                     target.ExpiryPolicy = AmqpLinkTerminusManager.GetExpirationPolicySymbol(this.Connection.LinkTerminusManager.ExpirationPolicy);
+                    target.Timeout = Convert.ToUInt32(this.Connection.LinkTerminusManager.ExpiryTimeout.TotalSeconds);
                 }
             }
             else

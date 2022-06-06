@@ -12,7 +12,6 @@ namespace TestAmqpBroker
     using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.Azure.Amqp;
-    using Microsoft.Azure.Amqp.Encoding;
     using Microsoft.Azure.Amqp.Framing;
     using Microsoft.Azure.Amqp.Sasl;
     using Microsoft.Azure.Amqp.Transaction;
@@ -46,8 +45,7 @@ namespace TestAmqpBroker
             this.txnManager = new TxnManager();
             this.connections = new Dictionary<SequenceNumber, AmqpConnection>();
             this.queues = new Dictionary<string, TestQueue>();
-            this.MockUnsettledLinkDeliveries = new ConcurrentDictionary<AmqpLinkIdentifier, ICollection<Delivery>>();
-            this.LinkTerminusManager = new AmqpLinkTerminusManager();
+
             if (queues != null)
             {
                 foreach (string q in queues)
@@ -62,12 +60,6 @@ namespace TestAmqpBroker
         }
 
         public AmqpLinkTerminusManager LinkTerminusManager { get; internal set; }
-
-        /// <summary>
-        /// Used to mock unsettled deliveries when the broker is on the receiving side. Key is the link name, values are the unsettled deliveries to be mocked.
-        /// Be aware that the unsettled deliveries will apply to both the senders and receivers with the same link name.
-        /// </summary>
-        internal ConcurrentDictionary<AmqpLinkIdentifier, ICollection<Delivery>> MockUnsettledLinkDeliveries { get; }
 
         public void Start()
         {
@@ -137,7 +129,6 @@ namespace TestAmqpBroker
         public void Stop()
         {
             this.transportListener?.Close();
-            this.MockUnsettledLinkDeliveries.Clear();
             lock (this.connections)
             {
                 if (this.connections.Count > 0)
@@ -272,6 +263,7 @@ namespace TestAmqpBroker
 
                     // set the expiration policy to whatever the client is.
                     target.ExpiryPolicy = ((Source)settings.Source).ExpiryPolicy;
+                    target.Timeout = ((Source)settings.Source).Timeout;
                 }
 
                 link = new ReceivingAmqpLink(session, settings);
@@ -293,31 +285,12 @@ namespace TestAmqpBroker
 
                     // set the expiration policy to whatever the client is.
                     source.ExpiryPolicy = ((Target)settings.Target).ExpiryPolicy;
+                    source.Timeout = ((Target)settings.Target).Timeout;
                 }
 
                 link = new SendingAmqpLink(session, settings);
             }
 
-            //Fx.Assert(settings.Unsettled == null, "The unsettled messages should be null at this point without anybody setting it.");
-            //if (this.MockUnsettledLinkDeliveries.TryGetValue(settings.LinkIdentifier, out ICollection<Delivery> unsettledDeliveries))
-            //{
-            //    Dictionary<ArraySegment<byte>, DeliveryState> unsettledDeliveryStates = new Dictionary<ArraySegment<byte>, DeliveryState>(ByteArrayComparer.Instance);
-            //    AmqpLinkTerminus terminus = new AmqpLinkTerminus(settings.LinkIdentifier, new Dictionary<ArraySegment<byte>, Delivery>(ByteArrayComparer.Instance));
-
-            //    foreach (Delivery unsettledDelivery in unsettledDeliveries)
-            //    {
-            //        unsettledDeliveryStates.Add(unsettledDelivery.DeliveryTag, unsettledDelivery.State);
-            //        terminus.UnsettledMap.Add(unsettledDelivery.DeliveryTag, unsettledDelivery);
-            //    }
-
-            //    link.Terminus = terminus;
-            //    //if (unsettledDeliveryStates.Count > 0)
-            //    //{
-            //    //    link.Settings.Unsettled = new AmqpMap(unsettledDeliveryStates, MapKeyByteArrayComparer.Instance);
-            //    //}
-            //}
-
-            link.Closed += new EventHandler((object sender, EventArgs e) => this.RemoveMockUnsettledDelivery(link.Settings.LinkIdentifier));
             return link;
         }
 
@@ -363,11 +336,6 @@ namespace TestAmqpBroker
         void ILinkFactory.EndOpenLink(IAsyncResult result)
         {
             CompletedAsyncResult.End(result);
-        }
-
-        void RemoveMockUnsettledDelivery(AmqpLinkIdentifier identifier)
-        {
-            this.MockUnsettledLinkDeliveries.TryRemove(identifier, out _);
         }
 
         static X509Certificate2 GetCertificate(string certFindValue)

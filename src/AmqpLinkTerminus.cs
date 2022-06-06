@@ -15,22 +15,6 @@
         AmqpLink link;
         bool suspended;
 
-        ///// <summary>
-        ///// Create a new instance of a link terminus object.
-        ///// </summary>
-        ///// <param name="settings">The <see cref="AmqpLinkSettings"/> that is associated with this link terminus object, which is used to uniquely identify it.</param>
-        ///// <param name="unsettledMap">The unsettled deliveries for this link terminus object.</param>
-        //public AmqpLinkTerminus(AmqpLinkSettings settings, IDictionary<ArraySegment<byte>, Delivery> unsettledMap)
-        //{
-        //    if (settings == null)
-        //    {
-        //        throw new ArgumentNullException(nameof(settings));
-        //    }
-
-        //    this.Settings = settings;
-        //    this.UnsettledMap = unsettledMap;
-        //}
-
         /// <summary>
         /// Create a new instance of a link terminus object.
         /// </summary>
@@ -82,7 +66,7 @@
         /// <summary>
         /// Returns the map of unsettled deliveries for this link terminus, where the key is the deliveryID and the value is the Delivery.
         /// </summary>
-        public IDictionary<ArraySegment<byte>, Delivery> UnsettledMap { get; }
+        public IDictionary<ArraySegment<byte>, Delivery> UnsettledMap { get; private set; }
 
         /// <summary>
         /// Check if this link terminus object is equal to the other object provided.
@@ -116,6 +100,14 @@
             }
 
             link.Terminus = this;
+            if (this.UnsettledMap != null)
+            {
+                link.Settings.Unsettled = new AmqpMap(
+                    this.UnsettledMap.ToDictionary(
+                        kvPair => kvPair.Key,
+                        kvPair => kvPair.Value.State),
+                    MapKeyByteArrayComparer.Instance);
+            }
         }
 
         internal void OnSuspend()
@@ -125,6 +117,7 @@
             {
                 alreadySuspended = this.suspended;
                 this.suspended = true;
+                this.UnsettledMap = this.link.UnsettledMap;
             }
 
             if (!alreadySuspended)

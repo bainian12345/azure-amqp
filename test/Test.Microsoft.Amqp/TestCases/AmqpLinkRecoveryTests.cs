@@ -4,13 +4,11 @@
 namespace Test.Microsoft.Amqp.TestCases
 {
     using global::Microsoft.Azure.Amqp;
-    using global::Microsoft.Azure.Amqp.Encoding;
     using global::Microsoft.Azure.Amqp.Framing;
     using global::Microsoft.Azure.Amqp.Transaction;
     using global::Microsoft.Azure.Amqp.Transport;
     using System;
     using System.Collections.Generic;
-    using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
     using Test.Microsoft.Azure.Amqp;
@@ -18,31 +16,34 @@ namespace Test.Microsoft.Amqp.TestCases
     using Xunit;
     using static TestAmqpBroker.TestAmqpBroker;
 
-    [Collection("Sequential")]
-    [Trait("Category", TestCategory.Current)]
-    public class AmqpLinkRecoveryTests : IClassFixture<TestAmqpBrokerFixture>
+    [Collection("LinkTerminusTests")]
+    public class AmqpLinkRecoveryTests : IClassFixture<TestAmqpBrokerFixture>, IDisposable
     {
-        static Uri addressUri;
+        static Uri connectionAddressUri;
         static TestAmqpBroker broker;
-        static IRuntimeProvider linkRecoveryClientProvider;
 
         public AmqpLinkRecoveryTests(TestAmqpBrokerFixture testAmqpBrokerFixture)
         {
-            addressUri = TestAmqpBrokerFixture.Address;
+            connectionAddressUri = TestAmqpBrokerFixture.Address;
             broker = testAmqpBrokerFixture.Broker;
-            linkRecoveryClientProvider = new TestRuntimeProvider();
+            broker.LinkTerminusManager = new AmqpLinkTerminusManager();
         }
 
-        // Test recovering a sender link by using an existing link terminus and verify that the link settings are still the same.
+        public void Dispose()
+        {
+            broker.LinkTerminusManager = null;
+        }
+
+        // Test recovering a sender link by using an existing link terminus and link settings, then verify that the link settings are still the same.
         [Fact]
         public async Task SenderRecoveryTest()
         {
             AmqpConnection connection = null;
             try
             {
-                connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
+                connection = await OpenTestConnectionAsync(connectionAddressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager()));
                 AmqpSession session = await connection.OpenSessionAsync();
-                SendingAmqpLink originalSender = await session.OpenLinkAsync<SendingAmqpLink>(nameof(SenderRecoveryTest) + Guid.NewGuid().ToString(), nameof(SenderRecoveryTest));
+                SendingAmqpLink originalSender = await session.OpenLinkAsync<SendingAmqpLink>(nameof(SenderRecoveryTest) + "-original-sender", nameof(SenderRecoveryTest));
                 originalSender.Settings.AddProperty("MyProp", "MyPropValue");
                 AmqpMessage[] messages = CreateMessages();
                 foreach (AmqpMessage m in messages)
@@ -60,13 +61,13 @@ namespace Test.Microsoft.Amqp.TestCases
                     Assert.Equal(m, delivery);
                 }
 
-                SendingAmqpLink newSender = await session.RecoverLinkAsync<SendingAmqpLink>(linkTerminus, nameof(SenderRecoveryTest));
+                SendingAmqpLink newSender = await session.RecoverLinkAsync<SendingAmqpLink>(linkTerminus, originalSender.Settings);
                 Assert.Equal(originalSender.Name, newSender.Name);
                 Assert.Equal(originalSender.IsReceiver, newSender.IsReceiver);
                 Assert.Equal("MyPropValue", newSender.Settings.Properties["MyProp"]);
 
                 // verify that sending works with this recovered link
-                ReceivingAmqpLink testReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>(nameof(SenderRecoveryTest) + Guid.NewGuid().ToString(), nameof(SenderRecoveryTest));
+                ReceivingAmqpLink testReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>(nameof(SenderRecoveryTest) + "-test-dummy-receiver", originalSender.Settings.Address().ToString());
                 await newSender.SendMessageAsync(AmqpMessage.Create("Hello World!"));
                 Assert.NotNull(await testReceiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(5000)));
             }
@@ -83,9 +84,9 @@ namespace Test.Microsoft.Amqp.TestCases
             AmqpConnection connection = null;
             try
             {
-                connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
+                connection = await OpenTestConnectionAsync(connectionAddressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager()));
                 AmqpSession session = await connection.OpenSessionAsync();
-                ReceivingAmqpLink originalReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>(nameof(ReceiverRecoveryTest) + Guid.NewGuid().ToString(), nameof(ReceiverRecoveryTest));
+                ReceivingAmqpLink originalReceiver = await session.OpenLinkAsync<ReceivingAmqpLink>(nameof(ReceiverRecoveryTest) + "-original-receiver", nameof(ReceiverRecoveryTest));
                 originalReceiver.Settings.AddProperty("MyProp", "MyPropValue");
                 originalReceiver.Settings.SettleType = SettleMode.SettleOnDispose;
                 AmqpMessage[] messages = CreateMessages();
@@ -104,14 +105,14 @@ namespace Test.Microsoft.Amqp.TestCases
                     Assert.Equal(m, delivery);
                 }
 
-                ReceivingAmqpLink newReceiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(linkTerminus, nameof(ReceiverRecoveryTest));
+                ReceivingAmqpLink newReceiver = await session.RecoverLinkAsync<ReceivingAmqpLink>(linkTerminus, originalReceiver.Settings);
                 Assert.Equal(originalReceiver.Name, newReceiver.Name);
                 Assert.Equal(originalReceiver.IsReceiver, newReceiver.IsReceiver);
                 Assert.Equal("MyPropValue", newReceiver.Settings.Properties["MyProp"]);
                 Assert.Equal(originalReceiver.Settings.SettleType, newReceiver.Settings.SettleType);
 
                 // verify that receiving and accepting works with this recovered link
-                SendingAmqpLink testSender = await session.OpenLinkAsync<SendingAmqpLink>(nameof(ReceiverRecoveryTest) + Guid.NewGuid().ToString(), nameof(ReceiverRecoveryTest));
+                SendingAmqpLink testSender = await session.OpenLinkAsync<SendingAmqpLink>(nameof(ReceiverRecoveryTest) + "-test-dummy-sender", originalReceiver.Settings.Address().ToString());
                 await testSender.SendMessageAsync(AmqpMessage.Create("Hello World2!"));
                 AmqpMessage received = await newReceiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(5000));
                 Assert.NotNull(received);
@@ -968,22 +969,23 @@ namespace Test.Microsoft.Amqp.TestCases
             where T1 : AmqpLink
             where T2 : AmqpLink
         {
-            string linkName = Guid.NewGuid().ToString();
+            string linkName = Guid.NewGuid().ToString().Substring(0, 10);
+            string queueName = "queue-" + linkName;
             AmqpConnection connection;
             if (linkRecoveryEnabled) 
             {
-                connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
+                connection = await OpenTestConnectionAsync(connectionAddressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager()));
             }
             else 
             {
-                connection = await AmqpConnection.Factory.OpenConnectionAsync(addressUri);
+                connection = await AmqpConnection.Factory.OpenConnectionAsync(connectionAddressUri);
             }
 
             try
             {
                 AmqpSession recoverableSession1 = await connection.OpenSessionAsync(new AmqpSessionSettings());
                 AmqpSession recoverableSession2 = await connection.OpenSessionAsync(new AmqpSessionSettings());
-                T1 link1 = await recoverableSession1.OpenLinkAsync<T1>(linkName, addressUri.AbsoluteUri);
+                T1 link1 = await recoverableSession1.OpenLinkAsync<T1>(linkName, queueName);
 
                 if (shouldClose)
                 {
@@ -997,12 +999,12 @@ namespace Test.Microsoft.Amqp.TestCases
                 bool shouldLink1BeStolen = linkRecoveryEnabled && !shouldClose && !shouldAbort && typeof(T1) == typeof(T2);
                 if (openNewLink)
                 {
-                    await recoverableSession2.OpenLinkAsync<T2>(linkName, addressUri.AbsoluteUri);
+                    await recoverableSession2.OpenLinkAsync<T2>(linkName, queueName);
                 }
                 else
                 {
                     AmqpLinkIdentifier link2Identifier = new AmqpLinkIdentifier(link1.Name, typeof(T2) == typeof(ReceivingAmqpLink));
-                    await recoverableSession2.RecoverLinkAsync<T2>(new AmqpLinkTerminus(link2Identifier, link1.UnsettledMap), addressUri.AbsoluteUri);
+                    await recoverableSession2.RecoverLinkAsync<T2>(new AmqpLinkTerminus(link2Identifier, link1.UnsettledMap), queueName);
                 }
 
                 if (shouldLink1BeStolen)
@@ -1023,63 +1025,52 @@ namespace Test.Microsoft.Amqp.TestCases
         {
             var testPolicies = new LinkTerminusExpirationPolicy[]
             {
-                LinkTerminusExpirationPolicy.NONE,
                 LinkTerminusExpirationPolicy.LINK_DETACH,
                 LinkTerminusExpirationPolicy.SESSION_END,
                 LinkTerminusExpirationPolicy.CONNECTION_CLOSE,
                 LinkTerminusExpirationPolicy.NEVER
             };
 
-            AmqpLinkTerminusManager prevBrokerLinkTerminusManager = broker.LinkTerminusManager;
-            try
+            foreach (LinkTerminusExpirationPolicy expirationPolicy in testPolicies)
             {
-                foreach (LinkTerminusExpirationPolicy expirationPolicy in testPolicies)
+                AmqpConnection connection = await OpenTestConnectionAsync(connectionAddressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy, ExpiryTimeout = expiryTimeout }));
+                AmqpConnection brokerConnection = broker.FindConnection(connection.Settings.ContainerId);
+
+                AmqpSession session = await connection.OpenSessionAsync();
+                SendingAmqpLink sendLink = await session.OpenLinkAsync<SendingAmqpLink>(testName + "-sender", connectionAddressUri.AbsoluteUri);
+                ReceivingAmqpLink receiveLink = await session.OpenLinkAsync<ReceivingAmqpLink>(testName + "-receiver", connectionAddressUri.AbsoluteUri);
+
+                AmqpLinkTerminusManager terminusManager = connection.LinkTerminusManager;
+                AmqpLinkTerminusManager brokerTerminusManager = brokerConnection.LinkTerminusManager;
+                TimeSpan timeoutBuffer = TimeSpan.FromMilliseconds(500);
+
+                await sendLink.CloseAsync();
+                await receiveLink.CloseAsync();
+                if (expiryTimeout > TimeSpan.Zero)
                 {
-                    AmqpConnection connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy }));
-                    broker.LinkTerminusManager = new AmqpLinkTerminusManager() { ExpirationPolicy = expirationPolicy };
-                    AmqpConnection brokerConnection = broker.FindConnection(connection.Settings.ContainerId);
-
-                    AmqpSession session = await connection.OpenSessionAsync();
-                    SendingAmqpLink sendLink = await session.OpenLinkAsync<SendingAmqpLink>(testName + "-sender", addressUri.AbsoluteUri);
-                    ReceivingAmqpLink receiveLink = await session.OpenLinkAsync<ReceivingAmqpLink>(testName + "-receiver", addressUri.AbsoluteUri);
-
-                    AmqpLinkTerminusManager terminusManager = connection.LinkTerminusManager;
-                    AmqpLinkTerminusManager brokerTerminusManager = brokerConnection.LinkTerminusManager;
-                    TimeSpan timeoutBuffer = TimeSpan.FromMilliseconds(500);
-
-                    await sendLink.CloseAsync();
-                    await receiveLink.CloseAsync();
-                    if (expiryTimeout > TimeSpan.Zero)
-                    {
-                        AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.LINK_DETACH, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
-                        await Task.Delay(expiryTimeout + timeoutBuffer);
-                    }
-
-                    AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.LINK_DETACH, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
-
-                    await session.CloseAsync();
-                    if (expiryTimeout > TimeSpan.Zero)
-                    {
-                        AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.SESSION_END, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
-                        await Task.Delay(expiryTimeout + timeoutBuffer);
-                    }
-
-                    AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.SESSION_END, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
-
-                    await connection.CloseAsync();
-                    if (expiryTimeout > TimeSpan.Zero)
-                    {
-                        AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.CONNECTION_CLOSE, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
-                        await Task.Delay(expiryTimeout + timeoutBuffer);
-                    }
-
-                    AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.CONNECTION_CLOSE, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                    AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.LINK_DETACH, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                    await Task.Delay(expiryTimeout + timeoutBuffer);
                 }
-            }
-            finally
-            {
-                // restore the LinkTerminusManager for the broker to previous state so future tests will not be affected.
-                broker.LinkTerminusManager = prevBrokerLinkTerminusManager;
+
+                AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.LINK_DETACH, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+
+                await session.CloseAsync();
+                if (expiryTimeout > TimeSpan.Zero)
+                {
+                    AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.SESSION_END, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                    await Task.Delay(expiryTimeout + timeoutBuffer);
+                }
+
+                AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.SESSION_END, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+
+                await connection.CloseAsync();
+                if (expiryTimeout > TimeSpan.Zero)
+                {
+                    AssertLinkTermini(expirationPolicy >= LinkTerminusExpirationPolicy.CONNECTION_CLOSE, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
+                    await Task.Delay(expiryTimeout + timeoutBuffer);
+                }
+
+                AssertLinkTermini(expirationPolicy > LinkTerminusExpirationPolicy.CONNECTION_CLOSE, terminusManager, brokerTerminusManager, sendLink.Terminus, receiveLink.Terminus);
             }
         }
 
@@ -1130,7 +1121,7 @@ namespace Test.Microsoft.Amqp.TestCases
             bool testSettleOnSend = false) where T : AmqpLink
         {
             string queueName = testName + "-queue";
-            TestAmqpConnection connection = await OpenTestConnectionAsync(addressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
+            TestAmqpConnection connection = await OpenTestConnectionAsync(connectionAddressUri, new TestRuntimeProvider(new AmqpLinkTerminusManager() { ExpirationPolicy = LinkTerminusExpirationPolicy.LINK_DETACH }));
             try
             {
                 TestAmqpConnection brokerConnection = broker.FindConnection(connection.Settings.ContainerId) as TestAmqpConnection;
@@ -1278,20 +1269,12 @@ namespace Test.Microsoft.Amqp.TestCases
             unsettledDeliveries.Add(brokerMessage.DeliveryTag, brokerMessage);
             AmqpLinkTerminus brokerInjectedLinkTerminus = new AmqpLinkTerminus(linkIdentifier, unsettledDeliveries);
             broker.LinkTerminusManager.TryAddLinkTerminus(linkIdentifier, brokerInjectedLinkTerminus);
-
-            //broker.MockUnsettledLinkDeliveries.AddOrUpdate(linkIdentifier, (key) => new List<Delivery>() { brokerMessage },
-            //    (key, unsettledDeliveries) =>
-            //    {
-            //        unsettledDeliveries.Add(brokerMessage);
-            //        return unsettledDeliveries;
-            //    });
-
             return message;
         }
 
         static async Task<AmqpLink> RecoverTestlinkAsync<T>(AmqpSession session, AmqpLinkTerminus linkTerminus, SettleMode settleMode = SettleMode.SettleOnReceive) where T : AmqpLink
         {
-            AmqpLink link = await session.RecoverLinkAsync<T>(linkTerminus, addressUri.AbsoluteUri);
+            AmqpLink link = await session.RecoverLinkAsync<T>(linkTerminus, connectionAddressUri.AbsoluteUri);
             await Task.Delay(1000); // wait for the sender to potentially send the initial deliveries
             return link;
         }

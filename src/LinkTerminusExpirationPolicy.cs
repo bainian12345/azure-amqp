@@ -9,11 +9,6 @@ namespace Microsoft.Azure.Amqp
     public enum LinkTerminusExpirationPolicy
     {
         /// <summary>
-        /// Do not save any link terminus information.
-        /// </summary>
-        NONE,
-
-        /// <summary>
         /// Delete and forget the link terminus when the <see cref="AmqpLink"/> is detached.
         /// </summary>
         LINK_DETACH,

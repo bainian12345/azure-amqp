@@ -30,9 +30,9 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
-        /// The default expiration policy which will be applied to all the created links tracked by this class.
+        /// The default expiration policy that decides when the link endpoint be suspended and marked for expiration.
         /// </summary>
-        public LinkTerminusExpirationPolicy ExpirationPolicy { get; set; } = LinkTerminusExpirationPolicy.NONE;
+        public LinkTerminusExpirationPolicy ExpirationPolicy { get; set; } = LinkTerminusExpirationPolicy.LINK_DETACH;
 
         /// <summary>
         /// The default duration that the link endpoint should be kept for after the expiration countdown begins.
@@ -114,27 +114,33 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
-        /// Add the link terminus to be tracked by this manager. Also associate the given link with the given link terminus.
+        /// Add the link terminus of the provided link to be tracked by this manager.
+        /// If the given link does not already have a link terminus associated, 
+        /// then either associate it with any existing link terminus found here, or associate it with a new link terminus.
+        /// If there are any existing link terminus, close the link associated with it due to link stealing.
         /// </summary>
         internal void RegisterLink(AmqpLink link)
         {
             Fx.Assert(link != null, "Should not be registering a null link.");
-            AmqpLinkTerminus linkTerminus = null;
             AmqpLink stolenLink = null;
             lock (this.linkTerminiLock)
             {
-                if (this.linkTermini.TryGetValue(link.Settings.LinkIdentifier, out linkTerminus))
+                if (this.linkTermini.TryGetValue(link.Settings.LinkIdentifier, out AmqpLinkTerminus existingLinkTerminus))
                 {
                     this.linkTermini.Remove(link.Settings.LinkIdentifier);
-                    stolenLink = linkTerminus.Link;
+                    stolenLink = existingLinkTerminus.Link;
+                    if (link.Terminus == null)
+                    {
+                        link.Terminus = existingLinkTerminus;
+                    }
                 }
-                else
+                else if (link.Terminus == null)
                 {
-                    linkTerminus = new AmqpLinkTerminus(link.Settings.LinkIdentifier, link.UnsettledMap);
+                    link.Terminus = new AmqpLinkTerminus(link.Settings.LinkIdentifier, link.UnsettledMap);
                 }
 
-                linkTerminus.AssociateLink(link);
-                this.linkTermini.Add(link.Settings.LinkIdentifier, linkTerminus);
+                link.Terminus.AssociateLink(link);
+                this.linkTermini.Add(link.Settings.LinkIdentifier, link.Terminus);
             }
 
             if (stolenLink != null && stolenLink != link)
@@ -142,14 +148,14 @@ namespace Microsoft.Azure.Amqp
                 stolenLink.OnLinkStolen();
             }
 
-            linkTerminus.Suspended += this.OnSuspendLinkTerminus;
-            linkTerminus.Expired += this.OnExpireLinkTerminus;
+            link.Terminus.Suspended += this.OnSuspendLinkTerminus;
+            link.Terminus.Expired += this.OnExpireLinkTerminus;
 
             // suspend the link terminus when the corresponding AmqpObject is closed.
             EventHandler onSuspendTerminus = null;
             onSuspendTerminus = (sender, e) =>
             {
-                linkTerminus.OnSuspend();
+                link.Terminus.OnSuspend();
                 ((AmqpObject)sender).Closed -= onSuspendTerminus;
             };
 
@@ -174,12 +180,14 @@ namespace Microsoft.Azure.Amqp
         internal void OnSuspendLinkTerminus(object sender, EventArgs e)
         {
             AmqpLinkTerminus linkTerminus = (AmqpLinkTerminus)sender;
+            Fx.Assert(linkTerminus.Link != null, "The link terminus should be associated with a link already upon suspend.");
             linkTerminus.Suspended -= this.OnSuspendLinkTerminus;
+
             if (linkTerminus.Link.Settings.Timeout() > TimeSpan.Zero)
             {
                 Timer expireLinkEndpointsTimer = new Timer();
                 expireLinkEndpointsTimer.Elapsed += (s, e) => this.OnExpireLinkTerminusTimer(s, e, linkTerminus);
-                expireLinkEndpointsTimer.Interval = this.ExpiryTimeout.TotalMilliseconds;
+                expireLinkEndpointsTimer.Interval = linkTerminus.Link.Settings.Timeout().TotalMilliseconds;
                 expireLinkEndpointsTimer.AutoReset = false;
                 expireLinkEndpointsTimer.Enabled = true;
             }
