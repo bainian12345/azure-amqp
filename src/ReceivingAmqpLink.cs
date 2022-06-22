@@ -602,6 +602,25 @@ namespace Microsoft.Azure.Amqp
             return base.CloseInternal();
         }
 
+        /// <summary>
+        /// Process and consolidate the unsettled deliveries sent with the remote Attach frame, by checking against the unsettled deliveries for this link terminus.
+        /// </summary>
+        /// <param name="remoteAttach">The incoming Attach from remote which contains the remote's unsettled delivery states.</param>
+        protected override void ProcessUnsettledDeliveries(Attach remoteAttach)
+        {
+            if (this.Session.Connection.LinkTerminusManager.TryGetLinkTerminus(this.LinkIdentifier, out AmqpLinkTerminus linkTerminus))
+            {
+                IDictionary<ArraySegment<byte>, Delivery> resultantUnsettledMap = Task.Run(() => linkTerminus.NegotiateUnsettledDeliveriesAsync(remoteAttach)).Result;
+                if (resultantUnsettledMap != null)
+                {
+                    foreach (var resultantUnsettled in resultantUnsettledMap)
+                    {
+                        this.UnsettledMap.Add(resultantUnsettled);
+                    }
+                }
+            }
+        }
+
         IAsyncResult BeginReceiveMessageBatch(int messageCount, TimeSpan batchWaitTimeout, TimeSpan timeout, CancellationToken cancellationToken, AsyncCallback callback, object state)
         {
             this.ThrowIfClosed();

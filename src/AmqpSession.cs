@@ -175,7 +175,7 @@ namespace Microsoft.Azure.Amqp
                     throw new InvalidOperationException(AmqpResources.GetString(AmqpResources.AmqpIllegalOperationState, "attach", this.State));
                 }
 
-                if (this.links.TryGetValue(link.LinkIdentifier, out linkToSteal) && linkToSteal.AllowLinkStealing(link))
+                if (this.links.TryGetValue(link.LinkIdentifier, out linkToSteal) && link.AllowLinkStealing(linkToSteal.Settings.GetAmqpLinkTerminusInfo()))
                 {
                     // Even though link onclose handler already removes the link from the links collection,
                     // calling Close() is fire and forget, so we will not be waiting for the link onClose handler to trigger
@@ -197,11 +197,11 @@ namespace Microsoft.Azure.Amqp
                         {
                             // There was a race and some other link has already created a link terminus and attach.
                             // In this case, stop opening of this link and close it due to link stealing.
-                            link.OnLinkStolen(true);
+                            throw new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, link.LinkIdentifier));
                         }
                     }
 
-                    if (!linkTerminus.TryAssociateLink(link))
+                    if (!linkTerminus.TryAssociateLink(link, out linkToSteal))
                     {
                         throw new InvalidOperationException("The link terminus to attach this link to is either disposed or link stealing is not allowed.");
                     }
@@ -214,7 +214,15 @@ namespace Microsoft.Azure.Amqp
 
             if (linkToSteal != null)
             {
-                linkToSteal.OnLinkStolen(false);
+                bool sameConnection = link.Session.Connection.Settings.ContainerId.Equals(linkToSteal.Session.Connection.Settings.ContainerId, StringComparison.OrdinalIgnoreCase);
+                bool sameSession = link.Session.RemoteChannel == linkToSteal.Session.RemoteChannel;
+
+                // In case of half open links (remote has aborted a link, but local still has the link has fully open state),
+                // and the remote link and the local link have the same connection/session handles,
+                // sending a Detach to remote to close the exsting link due to link steal may cause the remote to mistakenly think
+                // that the Detach is for this current link to be opened, instead of the exsting link to be closed for link stealing.
+                // In that case, simply abort the existing link locally without sending any Detach to remote to avoid causing confusion.
+                linkToSteal.OnLinkStolen(sameConnection && sameSession);
             }
 
             AmqpTrace.Provider.AmqpAttachLink(this.connection, this, link, link.LocalHandle.Value,
@@ -1396,6 +1404,11 @@ namespace Microsoft.Azure.Amqp
             }
 
             protected override void OnDisposeDeliveryInternal(Delivery delivery)
+            {
+                throw new NotImplementedException();
+            }
+
+            protected override void ProcessUnsettledDeliveries(Attach remoteAttach)
             {
                 throw new NotImplementedException();
             }

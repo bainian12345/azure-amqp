@@ -48,23 +48,23 @@ namespace Microsoft.Azure.Amqp
         bool TryRemoveLinkTerminus(KeyValuePair<AmqpLinkIdentifier, AmqpLinkTerminus> item);
 
         /// <summary>
-        /// Negotiate and consolidate the unsettled deliveries map from the remote Attach and the local link terminus associated with the given link identifier.
-        /// </summary>
-        /// <param name="linkIdentifier">The link identifier used to find the associated local link terminus.</param>
-        /// <param name="remoteAttach">The <see cref="Attach"/> received from remote as part of a link open process.</param>
-        /// <returns>
-        /// A task containing a map of deliveries which should remain to be unsettled for the local link terminus.
-        /// For senders, this means that these unsettled deliveries may need to be redelivered to remote.
-        /// For receivers, this means that these unsettled deliveries have already been previously delivered, so they may be skipped or directly settled in case of redelivery from remote sender.
-        /// </returns>
-        Task<IDictionary<ArraySegment<byte>, Delivery>> ProcessRemoteUnsettledMapAsync(AmqpLinkIdentifier linkIdentifier, Attach remoteAttach);
-
-        /// <summary>
         /// Create a new <see cref="AmqpLinkTerminus"/> instance with the given link identifier and delivery store.
         /// </summary>
         /// <param name="linkIdentifier">The link identifier used by the new link terminus.</param>
         /// <param name="deliveryStore">The delivery store used by the new link terminus to save and retrieve deliveries.</param>
         /// <returns>A newly created instance of link terminus.</returns>
         AmqpLinkTerminus CreateLinkTerminus(AmqpLinkIdentifier linkIdentifier, IAmqpDeliveryStore deliveryStore);
+
+        ///// <summary>
+        ///// Negotiate and consolidate the unsettled deliveries map from the remote Attach and the local link terminus associated with the given link identifier.
+        ///// </summary>
+        ///// <param name="linkIdentifier">The link identifier used to find the associated local link terminus.</param>
+        ///// <param name="remoteAttach">The <see cref="Attach"/> received from remote as part of a link open process.</param>
+        ///// <returns>
+        ///// A task containing a map of deliveries which should remain to be unsettled for the local link terminus.
+        ///// For senders, this means that these unsettled deliveries may need to be redelivered to remote.
+        ///// For receivers, this means that these unsettled deliveries have already been previously delivered, so they may be skipped or directly settled in case of redelivery from remote sender.
+        ///// </returns>
+        //Task<IDictionary<ArraySegment<byte>, Delivery>> ProcessRemoteUnsettledMapAsync(AmqpLinkIdentifier linkIdentifier, Attach remoteAttach);
     }
 }

@@ -19,6 +19,7 @@ namespace Microsoft.Azure.Amqp
         static readonly TimeSpan MinRequestCreditWindow = TimeSpan.FromSeconds(10);
         readonly SerializedWorker<AmqpMessage> pendingDeliveries;   // need link credit
         readonly WorkCollection<ArraySegment<byte>, SendAsyncResult, Outcome> inflightSends;
+        ICollection<Delivery> deliveriesToBeResentUponRecovery;
         Action<Delivery> dispositionListener;
         DateTime lastFlowRequestTime;
 
@@ -245,13 +246,25 @@ namespace Microsoft.Azure.Amqp
             bool syncComplete = base.OpenInternal();
             if (this.IsRecoverable && this.State == AmqpObjectState.Opened)
             {
-                foreach (AmqpMessage m in this.UnsettledMap.Values)
+                foreach (Delivery delivery in this.deliveriesToBeResentUponRecovery)
                 {
-                    this.pendingDeliveries.DoWork(m);
+                    this.ForceSendDelivery(delivery);
                 }
             }
 
             return syncComplete;
+        }
+
+        /// <summary>
+        /// Process and consolidate the unsettled deliveries sent with the remote Attach frame, by checking against the unsettled deliveries for this link terminus.
+        /// </summary>
+        /// <param name="remoteAttach">The incoming Attach from remote which contains the remote's unsettled delivery states.</param>
+        protected override void ProcessUnsettledDeliveries(Attach remoteAttach)
+        {
+            if (this.Session.Connection.LinkTerminusManager.TryGetLinkTerminus(this.LinkIdentifier, out AmqpLinkTerminus linkTerminus))
+            {
+                this.deliveriesToBeResentUponRecovery = Task.Run(() => linkTerminus.NegotiateUnsettledDeliveriesAsync(remoteAttach)).Result.Values;
+            }
         }
 
         static ArraySegment<byte> CreateTag()
