@@ -845,22 +845,6 @@ namespace Microsoft.Azure.Amqp
                             AmqpResources.GetString(AmqpResources.AmqpTransferLimitExceeded, delivery.DeliveryId.Value));
                     }
                 }
-
-                if (!delivery.Settled)
-                {
-                    lock (this.syncRoot)
-                    {
-                        if (this.UnsettledMap.TryGetValue(delivery.DeliveryTag, out Delivery existing) && Extensions.IsTerminal(existing.State) && Extensions.IsTerminal(delivery.State))
-                        {
-                            // this delivery is reached terminal outcome on both sides, which means it's already been processed.
-                            // No need to process this delivery again anymore, just need to simply settle it with the sender side outcome.
-                        }
-                        else
-                        {
-                            this.UnsettledMap.Add(delivery.DeliveryTag, delivery);
-                        }
-                    }
-                }
             }
 
             this.OnProcessTransfer(delivery, transfer, rawFrame);
