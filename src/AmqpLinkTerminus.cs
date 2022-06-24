@@ -38,7 +38,7 @@ namespace Microsoft.Azure.Amqp
             }
 
             this.Identifier = identifier;
-            this.DeliveryStore = deliveryStore;
+            this.UnsettledDeliveryStore = deliveryStore;
         }
 
         /// <summary>
@@ -69,7 +69,7 @@ namespace Microsoft.Azure.Amqp
         /// <summary>
         /// The <see cref="IAmqpDeliveryStore"/> which will be responsible for getting and saving unsettled deliveires for this link terminus.
         /// </summary>
-        public IAmqpDeliveryStore DeliveryStore { get; }
+        public IAmqpDeliveryStore UnsettledDeliveryStore { get; }
 
         /// <summary>
         /// Returns the identifier used to uniquely identify this terminus object.
@@ -131,7 +131,7 @@ namespace Microsoft.Azure.Amqp
                 this.disposed = true;
             }
 
-            this.DeliveryStore.RemoveDeliveriesAsync(this);
+            this.UnsettledDeliveryStore.RemoveDeliveriesAsync(this);
             this.link?.Session.Connection.LinkTerminusManager.TryRemoveLinkTerminus(new KeyValuePair<AmqpLinkIdentifier, AmqpLinkTerminus>(this.Identifier, this));
             this.DisassociateLink();
         }
@@ -143,7 +143,7 @@ namespace Microsoft.Azure.Amqp
         /// <returns>A task containing the resultant map of deliveries that would remain unsettled.</returns>
         internal protected async Task<IDictionary<ArraySegment<byte>, Delivery>> NegotiateUnsettledDeliveriesAsync(Attach remoteAttach)
         {
-            IDictionary<ArraySegment<byte>, Delivery> localUnsettledDeliveries = await this.DeliveryStore.RetrieveDeliveriesAsync(this);
+            IDictionary<ArraySegment<byte>, Delivery> localUnsettledDeliveries = await this.UnsettledDeliveryStore.RetrieveDeliveriesAsync(this);
             if (this.Identifier.IsReceiver)
             {
                 return localUnsettledDeliveries;
@@ -203,6 +203,20 @@ namespace Microsoft.Azure.Amqp
                 }
             }
 
+            IDictionary<ArraySegment<byte>, Delivery> retrievedUnsettledDeliveries = this.UnsettledDeliveryStore.RetrieveDeliveriesAsync(this).Result;
+            if (retrievedUnsettledDeliveries != null)
+            {
+                if (link.Settings.Unsettled == null)
+                {
+                    link.Settings.Unsettled = new AmqpMap(new Dictionary<ArraySegment<byte>, Delivery>(), MapKeyByteArrayComparer.Instance);
+                }
+
+                foreach (var kvp in retrievedUnsettledDeliveries)
+                {
+                    link.Settings.Unsettled.Add(new MapKey(kvp.Key), kvp.Value.State);
+                }
+            }
+
             stolenLink?.OnLinkStolen(false);
             return true;
         }
@@ -245,11 +259,11 @@ namespace Microsoft.Azure.Amqp
             lock (this.thisLock)
             {
                 Fx.Assert(link == this.Link, "The closed link should still be associated with this terminus, or else the event handler should have been removed.");
-                if (!this.disposed)
+                if (!this.disposed && !link.IsStolen())
                 {
                     foreach (var kvp in link.UnsettledMap)
                     {
-                        this.DeliveryStore.SaveDeliveryAsync(this, kvp.Value);
+                        this.UnsettledDeliveryStore.SaveDeliveryAsync(this, kvp.Value);
                     }
                 }
             }
@@ -305,9 +319,16 @@ namespace Microsoft.Azure.Amqp
 
                         // Currently we do not support partial delivery for local Received delivery states, such as OASIS AMQP doc section 3.4.6 examples 6, 7, 9.
                         // In this case, mark the delivery as aborted, then resend the delivery later if possible.
-                        localSenderDelivery.Aborted = localDeliveryState?.DescriptorCode == Received.Code
-                            && peerHasDelivery
-                            && (peerDeliveryState == null || peerDeliveryState.DescriptorCode == Received.Code);
+                        localSenderDelivery.Aborted = peerDeliveryState.Transactional() ||
+                            (localDeliveryState?.DescriptorCode == Received.Code && peerHasDelivery && (peerDeliveryState == null || peerDeliveryState.DescriptorCode == Received.Code));
+
+                        // If the remote has reached terminal outcome and local has not, simply apply the outcome to local and respond with the outcome.
+                        // This would be seen by OASIS AMQP doc section 3.4.6 examples 3, 8.
+                        if (remoteReachedTerminal)
+                        {
+                            localSenderDelivery.State = peerDeliveryState;
+                            localSenderDelivery.Settled = true;
+                        }
                     }
                     else if (localDeliveryState.IsTerminal())
                     {
@@ -315,7 +336,7 @@ namespace Microsoft.Azure.Amqp
                         if (!peerHasDelivery)
                         {
                             // This is OASIS AMQP doc section 3.4.6 example 10, where the delivery does not need to be resent. Simply settle and remove it locally.
-                            await this.DeliveryStore.RemoveDeliveryAsync(this, deliveryTag);
+                            await this.UnsettledDeliveryStore.RemoveDeliveryAsync(this, deliveryTag);
                             continue;
                         }
                         else
@@ -334,11 +355,63 @@ namespace Microsoft.Azure.Amqp
                     }
                     else if (localDeliveryState.Transactional())
                     {
-                        // TODO: what happens if the local delivery state is transactional? Should ideally abort the transaction to avoid any in-doubt deliveries.
+                        Outcome localTransactionalOutcome = ((TransactionalState)localDeliveryState).Outcome;
+
+                        if (peerDeliveryState.Transactional())
+                        {
+                            Outcome remoteTransactionalOutcome = ((TransactionalState)peerDeliveryState).Outcome;
+                            if (!remoteTransactionalOutcome.IsTerminal())
+                            {
+                                // If the remote has not reached terminal outcome, just abort the delivery to avoid any in-doubt states with the transaction,
+                                // since we are not sure what kind of state the remote is currently in (Transactional does convey states like "Received" state).
+                                localSenderDelivery.Aborted = true;
+                            }
+                            else
+                            {
+                                if (!localTransactionalOutcome.IsTerminal())
+                                {
+                                    // If the remote receiver has already reached terminal outcome, just apply that to the local sender as well, similar to OASIS AMQP doc section 3.4.6 examples 3, 8.
+                                    ((TransactionalState)localDeliveryState).Outcome = remoteTransactionalOutcome;
+                                    localSenderDelivery.Settled = true;
+                                }
+                                else
+                                {
+                                    // OASIS AMQP doc section 3.4.6, delivery 12, 13.
+                                    localSenderDelivery.Settled = remoteTransactionalOutcome.DescriptorCode == localTransactionalOutcome.DescriptorCode;
+                                }
+                            }
+                        }
+                        else if (!peerHasDelivery)
+                        {
+                            if (localTransactionalOutcome.IsTerminal())
+                            {
+                                // This is OASIS AMQP doc section 3.4.6 example 10, where the delivery does not need to be resent. Simply settle and remove it locally.
+                                await this.UnsettledDeliveryStore.RemoveDeliveryAsync(this, deliveryTag);
+                                continue;
+                            }
+                            else
+                            {
+                                // Resend the delivery as new, similar to OASIS AMQP doc section 3.4.6 example 1.
+                            }
+                        }
+                        else
+                        {
+                            // This is unexpected scenario, where only local sender delivery is transactional, just abort it to be safe.
+                            localSenderDelivery.Aborted = true;
+                        }
+                    }
+                    else
+                    {
+                        Fx.Assert(false, $"Unexpected deliveriy state. Local sender DeliveryState: {localDeliveryState}, Remote receiver DeliveryState: {peerDeliveryState}");
+                        localSenderDelivery.Aborted = true;
                     }
 
                     localSenderDelivery.Resume = peerHasDelivery;
                     resultantUnsettledDeliveries.Add(localSenderDelivery.DeliveryTag, localSenderDelivery);
+                    if (localSenderDelivery.Settled)
+                    {
+                        await this.UnsettledDeliveryStore.RemoveDeliveryAsync(this, localSenderDelivery.DeliveryTag);
+                    }
                 }
             }
 

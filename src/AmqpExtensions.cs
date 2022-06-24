@@ -542,6 +542,16 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
+        /// Checks if the given link is closed due to link stealing.
+        /// </summary>
+        /// <param name="link">The link to be checked.</param>
+        /// <returns>True if the link has been clsoed due to link stealing.</returns>
+        public static bool IsStolen(this AmqpLink link)
+        {
+            return link.IsClosing() && link.TerminalException is AmqpException amqpException && AmqpErrorCode.Stolen.Equals(amqpException.Error.Condition);
+        }
+
+        /// <summary>
         /// Updates or inserts a value in begin.properties.
         /// </summary>
         /// <param name="begin">The <see cref="Begin"/> performative.</param>

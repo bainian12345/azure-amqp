@@ -19,9 +19,9 @@ namespace Microsoft.Azure.Amqp
         static readonly TimeSpan MinRequestCreditWindow = TimeSpan.FromSeconds(10);
         readonly SerializedWorker<AmqpMessage> pendingDeliveries;   // need link credit
         readonly WorkCollection<ArraySegment<byte>, SendAsyncResult, Outcome> inflightSends;
-        ICollection<Delivery> deliveriesToBeResentUponRecovery;
         Action<Delivery> dispositionListener;
         DateTime lastFlowRequestTime;
+        ICollection<Delivery> deliveriesToBeResentUponRecovery;
 
         /// <summary>
         /// Initializes the object.
@@ -238,24 +238,6 @@ namespace Microsoft.Azure.Amqp
         }
 
         /// <summary>
-        /// Opens the link.
-        /// </summary>
-        /// <returns>True if open is completed.</returns>
-        protected override bool OpenInternal()
-        {
-            bool syncComplete = base.OpenInternal();
-            if (this.IsRecoverable && this.State == AmqpObjectState.Opened)
-            {
-                foreach (Delivery delivery in this.deliveriesToBeResentUponRecovery)
-                {
-                    this.ForceSendDelivery(delivery);
-                }
-            }
-
-            return syncComplete;
-        }
-
-        /// <summary>
         /// Process and consolidate the unsettled deliveries sent with the remote Attach frame, by checking against the unsettled deliveries for this link terminus.
         /// </summary>
         /// <param name="remoteAttach">The incoming Attach from remote which contains the remote's unsettled delivery states.</param>
@@ -264,6 +246,7 @@ namespace Microsoft.Azure.Amqp
             if (this.Session.Connection.LinkTerminusManager.TryGetLinkTerminus(this.LinkIdentifier, out AmqpLinkTerminus linkTerminus))
             {
                 this.deliveriesToBeResentUponRecovery = Task.Run(() => linkTerminus.NegotiateUnsettledDeliveriesAsync(remoteAttach)).Result.Values;
+                this.Opened += ResendDeliveriesOnOpen;
             }
         }
 
@@ -352,6 +335,18 @@ namespace Microsoft.Azure.Amqp
             }
 
             return success;
+        }
+
+        static void ResendDeliveriesOnOpen(object sender, EventArgs eventArgs)
+        {
+            var thisPtr = (SendingAmqpLink)sender;
+            thisPtr.Opened -= ResendDeliveriesOnOpen;
+            foreach (Delivery delivery in thisPtr.deliveriesToBeResentUponRecovery)
+            {
+                thisPtr.ForceSendDelivery(delivery);
+            }
+
+            thisPtr.deliveriesToBeResentUponRecovery = null;
         }
 
         readonly struct SendMessageParam
