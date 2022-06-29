@@ -5,9 +5,7 @@ namespace Microsoft.Azure.Amqp
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
     using System.Threading;
-    using System.Threading.Tasks;
     using Microsoft.Azure.Amqp.Encoding;
     using Microsoft.Azure.Amqp.Framing;
     using Microsoft.Azure.Amqp.Transaction;
@@ -525,7 +523,7 @@ namespace Microsoft.Azure.Amqp
         /// </summary>
         /// <param name="existingLinkTerminusInfo">The terminus info for the existing link to be stolen.</param>
         /// <returns>True if link stealing this link should be allowed.</returns>
-        public virtual bool AllowLinkStealing(IAmqpLinkTerminusInfo existingLinkTerminusInfo)
+        internal protected virtual bool AllowLinkStealing(IAmqpLinkTerminusInfo existingLinkTerminusInfo)
         {
             return true;
         }
@@ -547,11 +545,7 @@ namespace Microsoft.Azure.Amqp
         {
             if (delivery.Settled)
             {
-                lock (this.syncRoot)
-                {
-                    this.UnsettledMap.Remove(delivery.DeliveryTag);
-                }
-
+                this.RemoveUnsettledDelivery(delivery.DeliveryTag);
                 this.OnDeliverySettled();
             }
 
@@ -991,10 +985,7 @@ namespace Microsoft.Azure.Amqp
             delivery.Settled = delivery.Settled || this.settings.SettleType == SettleMode.SettleOnSend;
             if (!delivery.Settled)
             {
-                lock (this.syncRoot)
-                {
-                    this.UnsettledMap.Add(delivery.DeliveryTag, delivery);
-                }
+                this.AddOrUpdateUnsettledDelivery(delivery);
             }
 
             delivery.Link = this;
@@ -1012,8 +1003,36 @@ namespace Microsoft.Azure.Amqp
             }
             else
             {
-                //this.Close();
                 this.SafeClose(new AmqpException(AmqpErrorCode.Stolen, AmqpResources.GetString(AmqpResources.AmqpLinkStolen, this.LinkIdentifier)));
+            }
+        }
+
+        internal void AddOrUpdateUnsettledDelivery(Delivery delivery)
+        {
+            lock (this.syncRoot)
+            {
+                if (this.UnsettledMap.ContainsKey(delivery.DeliveryTag))
+                {
+                    this.UnsettledMap.Remove(delivery.DeliveryTag);
+                }
+
+                this.UnsettledMap.Add(delivery.DeliveryTag, delivery);
+            }
+        }
+
+        internal void RemoveUnsettledDelivery(ArraySegment<byte> deliveryTag)
+        {
+            lock (this.syncRoot)
+            {
+                this.UnsettledMap.Remove(deliveryTag);
+            }
+
+            if (this.Session.Connection.AmqpSettings.RuntimeProvider is ILinkRecoveryRuntimeProvider linkRecoveryRuntimeProvider)
+            {
+                if (linkRecoveryRuntimeProvider.UnsettledDeliveryStore != null)
+                {
+                    linkRecoveryRuntimeProvider.UnsettledDeliveryStore.RemoveDeliveryAsync(this.Terminus, deliveryTag);
+                }
             }
         }
 
@@ -1022,10 +1041,7 @@ namespace Microsoft.Azure.Amqp
             AmqpTrace.Provider.AmqpDispose(this, delivery.DeliveryId.Value, settled, state);
             if (settled && !delivery.Settled)
             {
-                lock (this.syncRoot)
-                {
-                    this.UnsettledMap.Remove(delivery.DeliveryTag);
-                }
+                this.RemoveUnsettledDelivery(delivery.DeliveryTag);
             }
 
             this.Session.DisposeDelivery(this, delivery, settled, state, noFlush);

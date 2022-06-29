@@ -648,7 +648,7 @@ namespace TestAmqpBroker
                         }
                         else
                         {
-                            message.LockedBy = consumer.Link.Terminus ?? consumer as object;
+                            message.LockedBy = consumer.Link.Terminus?? consumer as object;
                         }
                     }
                 }
