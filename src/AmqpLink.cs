@@ -265,7 +265,6 @@ namespace Microsoft.Azure.Amqp
             Fx.Assert(this.Session == null, "The link is already attached to a session");
             this.MaxFrameSize = session.Connection.Settings.MaxFrameSize();
             this.Session = session;
-            this.LinkIdentifier = new AmqpLinkIdentifier(this.Name, this.settings.IsReceiver(), this.Session.Connection.Settings.ContainerId);
             session.AttachLink(this);
         }
 
